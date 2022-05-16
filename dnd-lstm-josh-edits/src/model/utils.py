@@ -80,7 +80,15 @@ def compute_a2c_loss(probs, values, returns):
 
     """
     policy_grads, value_losses = [], []
+    # hack gpu pushing
+    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    probs_dev, values_dev, returns_dev = [], [], []
     for prob_t, v_t, R_t in zip(probs, values, returns):
+        probs_dev.append(prob_t.to(device))
+        values_dev.append(v_t.to(device))
+        returns_dev.append(R_t.to(device))
+
+    for prob_t, v_t, R_t in zip(probs_dev, values_dev, returns_dev):
         A_t = R_t - v_t.item()
         policy_grads.append(-prob_t * A_t)
         value_losses.append(

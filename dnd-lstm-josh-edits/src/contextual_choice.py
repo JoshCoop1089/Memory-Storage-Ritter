@@ -14,6 +14,7 @@ from model.utils import get_reward, compute_returns, compute_a2c_loss
 
 def run_experiment(exp_settings):
     sns.set(style='white', context='talk', palette='colorblind')
+    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     """
     exp_settings is a dict with parameters as keys:
 
@@ -100,7 +101,7 @@ def run_experiment(exp_settings):
         x_dim = obs_dim + ctx_dim
 
     # init agent / optimizer
-    agent = Agent(x_dim, dim_hidden, dim_output, dict_len, exp_settings)
+    agent = Agent(x_dim, dim_hidden, dim_output, dict_len, exp_settings).to(device)
     optimizer = torch.optim.Adam(agent.parameters(), lr=learning_rate)
 
     '''train'''
@@ -119,6 +120,8 @@ def run_experiment(exp_settings):
         time_start = time.time()
         # get data for this epoch
         X, Y = task.sample(n_unique_example)
+        X.to(device)
+        Y.to(device)
         # flush hippocampus
         agent.reset_memory()
         agent.turn_on_retrieval()
@@ -129,6 +132,8 @@ def run_experiment(exp_settings):
             cumulative_reward = 0
             probs, rewards, values = [], [], []
             h_t, c_t = agent.get_init_states()
+            h_t.to(device)
+            c_t.to(device)
 
             # Clearing the per trial hidden state buffer
             agent.flush_trial_buffer()
@@ -143,9 +148,15 @@ def run_experiment(exp_settings):
                 # Pass in the whole observation/context pair, and split it up in the agent
                 output_t, _ = agent(X[m][t].view(1, 1, -1), h_t, c_t)
                 a_t, prob_a_t, v_t, h_t, c_t = output_t
+                a_t.to(device)
+                prob_a_t.to(device)
+                v_t.to(device)
+                h_t.to(device)
+                c_t.to(device)
 
                 # compute immediate reward
-                r_t = get_reward(a_t, Y[m][t])
+                r_t = get_reward(a_t, Y[m][t].to(device))
+                r_t.to(device)
 
                 # log
                 probs.append(prob_a_t)

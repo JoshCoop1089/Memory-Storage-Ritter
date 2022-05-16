@@ -78,7 +78,7 @@ def graph_the_things(epochs, mem_type, num_repeats = 1, sim_thresh = False, kern
         for num2 in range(len_input2):
             runs = []
             sims = []
-            change = [f'M:{mem_type[num1]}', 'obs']
+            change = [f'M:{mem_type[num1]}']
             # context = 'no_context'
             kernel1 = 'cosine'
             
@@ -133,7 +133,7 @@ def graph_the_things(epochs, mem_type, num_repeats = 1, sim_thresh = False, kern
 
 epochs = 20
 num_repeats = 1
-mem_type = ['context', 'obs/context', 'hidden']
+mem_type = ['obs/context', 'context', 'hidden']
 kernel = ['cosine', 'l2']
 noise = [0.5]
 # , 0.2, 0.5]

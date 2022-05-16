@@ -6,6 +6,7 @@ Proceedings of the International Conference on Machine Learning (ICML).
 """
 import torch
 import torch.nn as nn
+from zmq import device
 from model.DND import DND
 from model.A2C import A2C_linear
 
@@ -29,10 +30,12 @@ class DNDLSTM(nn.Module):
         self.hidden_dim = hidden_dim
         self.bias = bias
         self.exp_settings = exp_settings
+        self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+
         # input-hidden weights
-        self.i2h = nn.Linear(input_dim, (N_GATES+1) * hidden_dim, bias=bias)
+        self.i2h = nn.Linear(input_dim, (N_GATES+1) * hidden_dim, bias=bias).to(self.device)
         # hidden-hidden weights
-        self.h2h = nn.Linear(hidden_dim, (N_GATES+1) * hidden_dim, bias=bias)
+        self.h2h = nn.Linear(hidden_dim, (N_GATES+1) * hidden_dim, bias=bias).to(self.device)
         # dnd
         self.dnd = DND(dict_len, hidden_dim, exp_settings)
         #policy
@@ -49,15 +52,15 @@ class DNDLSTM(nn.Module):
 
     def forward(self, x_t, h, c):
         # unpack activity
-        h = h.view(h.size(1), -1)
-        c = c.view(c.size(1), -1)
+        h = h.view(h.size(1), -1).to(self.device)
+        c = c.view(c.size(1), -1).to(self.device)
 
         # Input is the obs/context paired together
-        x_t = x_t.view(x_t.size(1), -1)
+        x_t = x_t.view(x_t.size(1), -1).to(self.device)
 
         # Split the input for possible use later
-        observation = x_t[0][:self.obs_dim].view(1, self.obs_dim)
-        context = x_t[0][self.obs_dim:].view(1, self.ctx_dim)
+        observation = x_t[0][:self.obs_dim].view(1, self.obs_dim).to(self.device)
+        context = x_t[0][self.obs_dim:].view(1, self.ctx_dim).to(self.device)
 
         # Only passing the observations into the model ()
         if self.exp_settings['agent_input'] == 'obs':
@@ -86,15 +89,15 @@ class DNDLSTM(nn.Module):
         ########################
         # All input is stored in memory (QiHong Github version)
         if mem_store == 'obs/context':
-            m_t = self.dnd.get_memory(x_t).tanh()
+            m_t = self.dnd.get_memory(x_t).tanh().to(self.device)
 
         # Only context is stored in memory (Ritter Version)
         elif mem_store == 'context':
-            m_t = self.dnd.get_memory(context).tanh()
+            m_t = self.dnd.get_memory(context).tanh().to(self.device)
 
         # Hidden States stored in memory (Our Version)
         else: #mem_store == 'hidden'
-            m_t = self.dnd.get_memory(h).tanh()
+            m_t = self.dnd.get_memory(h).tanh().to(self.device)
         #######################
 
         # gate the memory; in general, can be any transformation of it

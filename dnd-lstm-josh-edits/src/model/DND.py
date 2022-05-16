@@ -324,7 +324,7 @@ class DND():
         best_memory_val = None
         if policy == '1NN':
             best_memory_id = int(torch.argmax(similarities))
-            self.recall_sims.append(similarities[best_memory_id].detach().numpy())
+            self.recall_sims.append(similarities[best_memory_id].cpu().detach().numpy())
             best_memory_val = self.vals[best_memory_id]
 
         else:
