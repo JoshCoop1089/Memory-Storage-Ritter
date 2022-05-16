@@ -76,9 +76,6 @@ class DND():
         self.vals = []
         self.recall_sims = []
         
-        
-
-
     def check_config(self):
         assert self.dict_len > 0
         assert self.kernel in ALL_KERNELS
@@ -114,9 +111,6 @@ class DND():
 
         # ----End of Trial----
         # Reached end of episode, different ways to update memory
-        # a = self.change
-        # b = ['update_avg', 'update_ind_avg']
-        # mem_update_boolean = any(x in max(a,b,key=len) for x in min(b,a,key=len))
         mem_update_boolean = self.exp_settings['kaiser_key_update']
 
         # The entire context/observation were passed into the agent
@@ -140,7 +134,19 @@ class DND():
             # Only context is stored in memory (Ritter Version)
             # figure this out after testing the dict inputs
             elif self.exp_settings['mem_store'] == 'context':
-                pass
+                self.keys.append([torch.squeeze(memory_key.data)])
+
+                # Dumb error catching due to how i organize the data for our version
+                try:
+                    test = self.keys[0][0]
+                except IndexError:
+                    self.keys.pop(0)
+                self.vals.append(torch.squeeze(memory_val.data))
+                # remove the oldest memory, if overflow
+                if len(self.keys) > self.dict_len:
+                    self.keys.pop(0)
+                    self.vals.pop(0)
+                return
 
             # Hidden States stored in memory (Our Version)
             # Need to write the supervised learning model to take info and embed
@@ -152,29 +158,6 @@ class DND():
         elif self.exp_settings['agent_input'] == 'obs':
             keys = self.trial_buffer
             trial_hidden_states = [keys[i] for i in range(len(keys)//4, len(keys), 2)]
-
-        """
-        # Ritter OG Code
-        if "Original" in self.change:
-            self.keys.append([torch.squeeze(memory_key.data)])
-            # Dumb error catching due to how i organize the data for our version
-            try:
-                test = self.keys[0][0]
-            except IndexError:
-                self.keys.pop(0)
-            self.vals.append(torch.squeeze(memory_val.data))
-            # remove the oldest memory, if overflow
-            if len(self.keys) > self.dict_len:
-                self.keys.pop(0)
-                self.vals.pop(0)
-            return
-
-        # Use hidden states as keys, cutting off first quarter of trial and every other state
-        elif "Quarter" in self.change:
-            keys = self.trial_buffer
-            trial_hidden_states = [keys[i] for i in range(len(keys)//4, len(keys),2)]
-        """
-
 
         # Trying different versions of Kaiser Update averaging
         if mem_update_boolean:
@@ -257,6 +240,7 @@ class DND():
                 self.keys.pop(0)
                 self.vals.pop(0)
 
+        # This is kind of a catchall, unsure if this would ever be reached at the current moment
         # No mem updates, just slam all hidden states on end of memory
         else:
             for key in trial_hidden_states:
@@ -287,7 +271,6 @@ class DND():
         -------
         a row vector
             a DND value, representing the memory content
-
         """
         # Dumb error catching due to how i organize the data for our version
         try:
@@ -305,10 +288,7 @@ class DND():
         # due to storing the list of updated memories in self.keys, 
         # need to iterate over it and select the first in the list, 
         # which is the most recent memory in that specific sublist
-        # try:
         key_list = [self.keys[x][0] for x in range(len(self.keys))]
-        # except Exception as e:
-        #     key_list = []
         similarities = compute_similarities(query_key, key_list, self.kernel)
 
         # get the best-match memory
@@ -340,7 +320,6 @@ class DND():
         -------
         a row vector
             a DND value, representing the memory content
-
         """
         best_memory_val = None
         if policy == '1NN':
@@ -351,7 +330,6 @@ class DND():
         else:
             raise ValueError(f'unrecog recall policy: {policy}')
         return best_memory_val, best_memory_id
-
 
 """helpers"""
 def compute_similarities(query_key, key_list, metric):
@@ -371,7 +349,6 @@ def compute_similarities(query_key, key_list, metric):
     -------
     a row vector w/ len #memories
         the similarity between query vs. key_i, for all i
-
     """
     # reshape query to 1 x key_dim
     q = query_key.data.view(1, -1)
@@ -387,7 +364,6 @@ def compute_similarities(query_key, key_list, metric):
     else:
         raise ValueError(f'unrecog metric: {metric}')
     return similarities
-
 
 def _empty_memory(memory_dim):
     """Get a empty memory, assuming the memory is a row vector

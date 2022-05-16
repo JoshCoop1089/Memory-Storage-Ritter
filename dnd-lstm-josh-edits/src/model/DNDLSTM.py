@@ -35,8 +35,7 @@ class DNDLSTM(nn.Module):
         self.h2h = nn.Linear(hidden_dim, (N_GATES+1) * hidden_dim, bias=bias)
         # dnd
         self.dnd = DND(dict_len, hidden_dim, exp_settings)
-        # sim_threshhold, change, kernel)
-        #
+        #policy
         self.a2c = A2C_linear(hidden_dim, output_dim)
         # init
         self.reset_parameter()
@@ -60,7 +59,7 @@ class DNDLSTM(nn.Module):
         observation = x_t[0][:self.obs_dim].view(1, self.obs_dim)
         context = x_t[0][self.obs_dim:].view(1, self.ctx_dim)
 
-        # Only passing the observations into the model
+        # Only passing the observations into the model ()
         if self.exp_settings['agent_input'] == 'obs':
             x_t = observation
 
@@ -87,18 +86,14 @@ class DNDLSTM(nn.Module):
         ########################
         # All input is stored in memory (QiHong Github version)
         if mem_store == 'obs/context':
-            # retrieve memory
             m_t = self.dnd.get_memory(x_t).tanh()
 
         # Only context is stored in memory (Ritter Version)
-        # THIS DOESN'T WORK YET
         elif mem_store == 'context':
-            # m_t = self.dnd.get_memory(context).tanh()
-            pass
+            m_t = self.dnd.get_memory(context).tanh()
 
         # Hidden States stored in memory (Our Version)
         else: #mem_store == 'hidden'
-            # retrieve memory via hidden state
             m_t = self.dnd.get_memory(h).tanh()
         #######################
 
@@ -111,35 +106,16 @@ class DNDLSTM(nn.Module):
         ########################
         # All input is stored in memory (QiHong Github version)
         if mem_store == 'obs/context':
-        # "Original" in self.dnd.change:
-            # retrieve memory
             self.dnd.save_memory(x_t, c_t)
 
         # Only context is stored in memory (Ritter Version)
-        # THIS DOESN'T WORK YET
         elif mem_store == 'context':
-            # self.dnd.save_memory(context, c_t)
-            pass
+            self.dnd.save_memory(context, c_t)
 
         # Hidden States stored in memory (Our Version)
         else: #mem_store == 'hidden'
-            # retrieve memory via hidden state
             self.dnd.save_memory(h_t, c_t)
         #######################
-
-        """
-        ########################
-        # Edit to change memory storage from context key to hidden state
-        if "Original" in self.dnd.change:
-            # take a episodic snapshot
-            self.dnd.save_memory(x_t, c_t)
-
-        # New mem_store will buffer all h_t for a trial and decide what to store at end of trial
-        else:
-            # take a episodic snapshot
-            self.dnd.save_memory(h_t, c_t)
-        ########################
-        """
 
         # policy
         pi_a_t, v_t = self.a2c.forward(h_t)
@@ -165,7 +141,6 @@ class DNDLSTM(nn.Module):
         -------
         torch.tensor(int), torch.tensor(float)
             sampled action, log_prob(sampled action)
-
         """
         m = torch.distributions.Categorical(action_distribution)
         a_t = m.sample()

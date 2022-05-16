@@ -44,7 +44,7 @@ def graph_the_things(epochs, mem_type, num_repeats = 1, sim_thresh = False, kern
     k,v = [[]],[[]]
     exp_settings = {}
 
-    """
+    """  Possible options for exp_settings
     exp_settings['randomize'] = True/False
     exp_settings['epochs'] = #
     exp_settings['sim_threshhold'] = #
@@ -53,7 +53,7 @@ def graph_the_things(epochs, mem_type, num_repeats = 1, sim_thresh = False, kern
     exp_settings['noise_percent'] = #
     exp_settings['obs_dim'] = #
     exp_settings['ctx_dim'] = #
-    exp_settings['agent_input'] = all/obs
+    exp_settings['agent_input'] = 'obs', 'obs/context'
     exp_settings['mem_store'] = 'obs/context', 'context', 'hidden'
     exp_settings['kaiser_key_update'] = True/False
     """
@@ -65,15 +65,11 @@ def graph_the_things(epochs, mem_type, num_repeats = 1, sim_thresh = False, kern
     exp_settings['kernel'] = 'cosine'
     exp_settings['n_unique_examples'] = 50
     exp_settings['noise_percent'] = 0.5
-    exp_settings['obs_dim'] = 8
-    exp_settings['ctx_dim'] = 4
+    exp_settings['obs_dim'] = 128
+    exp_settings['ctx_dim'] = 128
     exp_settings['agent_input'] = 'obs/context'
     exp_settings['mem_store'] = 'obs/context'
     exp_settings['kaiser_key_update'] = False
-
-
-
-
 
 
     for num1 in range(len(mem_type)):
@@ -82,7 +78,7 @@ def graph_the_things(epochs, mem_type, num_repeats = 1, sim_thresh = False, kern
         for num2 in range(len_input2):
             runs = []
             sims = []
-            change = [f'M:{mem_type[num1]}']
+            change = [f'M:{mem_type[num1]}', 'obs']
             # context = 'no_context'
             kernel1 = 'cosine'
             
@@ -109,8 +105,11 @@ def graph_the_things(epochs, mem_type, num_repeats = 1, sim_thresh = False, kern
 
             # Won't need this for supervised learning, but keeping for legacy code versions
             if sim_thresh and exp_settings['mem_store'] == 'hidden':
-                exp_settings['sim_threshhold'] = 0.5
+                exp_settings['sim_threshhold'] = 0.4
                 # get_sim_threshhold(mem_type = 'Quarter', kernel = kernel1, context = context)
+
+            if exp_settings['agent_input'] == 'obs' and exp_settings['mem_store'] == 'obs/context':
+                continue
 
             for iter in range(num_repeats):
                 print("\n", "- -"*10)
@@ -122,6 +121,8 @@ def graph_the_things(epochs, mem_type, num_repeats = 1, sim_thresh = False, kern
             avg_sims = np.mean(sims, axis = 0)                                     
             log_return[num1].append((avg_returns, change))        
             log_sims[num1].append((avg_sims, change))
+
+            # This stores the k,v pairs from memory for every run, but currently the graph only uses the last version present
             k[num1].append(keys)
             v[num1].append(vals)
         k.append([])
@@ -130,20 +131,16 @@ def graph_the_things(epochs, mem_type, num_repeats = 1, sim_thresh = False, kern
         log_sims.append([])
     return log_return, log_sims, k, v
 
-
-
-epochs = 2
+epochs = 20
 num_repeats = 1
-mem_type = ['obs/context', 'hidden']
-    # "Original", "Quarter"]
+mem_type = ['context', 'obs/context', 'hidden']
 kernel = ['cosine', 'l2']
-noise = [0.0, 0.2, 0.5]
+noise = [0.5]
+# , 0.2, 0.5]
 # , 0.7]
 # , 0.8, 0.9]
 update_type = [True, False]
-    # 'no', 'update_avg', 'update_ind_avg']
 change_task = ['obs/context', 'obs']
-    # 'no_context', 'no_mem_trial']
 
 log_returns = []
 # log_returns, log_sims, k, v = graph_the_things(epochs, mem_type, num_repeats, sim_thresh = True, change_task=change_task)
@@ -151,7 +148,7 @@ log_returns = []
 # log_returns.append(graph_the_things(epochs, mem_type, kernel=kernel))
 # log_returns.append(graph_the_things(epochs, mem_type, num_repeats, sim_thresh = True, update=update_type))
 # log_returns.append(graph_the_things(epochs, mem_type, num_repeats, sim_thresh = False, update=update_type))
-# log_returns, log_sims, k, v = graph_the_things(epochs, mem_type, num_repeats, sim_thresh = True, noise=noise)
+log_returns, log_sims, k, v = graph_the_things(epochs, mem_type, num_repeats, sim_thresh = True, noise=noise)
 # print(log_returns)
 
 f, axes = plt.subplots(1, 2, figsize=(16, 10))
@@ -163,10 +160,13 @@ for ind_trial in range(len(log_returns)):
         data = log_returns[ind_trial][exp][0]
         mem_type_name = log_returns[ind_trial][exp][1][0]
         label = (mem_type_name,log_returns[ind_trial][exp][1][-1][1])
-        if mem_type_name == 'obs/context':
+        if mem_type_name == 'M:obs/context':
+            linestyle = 'dotted'
+            marker = '.'
+        if mem_type_name == 'M:context':
             linestyle = 'dashed'
             marker = 'o'
-        if mem_type_name == 'hidden':
+        if mem_type_name == 'M:hidden':
             linestyle = 'solid'
             marker = 'x'
         axes[0].plot(data, linestyle=linestyle, marker=marker, label = label)
@@ -190,6 +190,7 @@ f.subplots_adjust(top=0.9)
 plt.suptitle("Kernel: Cosine, Dict Len: 100, Input Dim: 128, Trial Length: 10 \n Sim Thresholding, Memory Updates on Quarter Trials Only", y=.98)
 
 
+# '''visualize keys and values'''
 # Need to figure out what i want to display, as of now it shows the memory from the last trial of the manipulated variable for og and hidden
 def plot_sim_comparisons(k, v, f, a, mem_type_name, noise):
     for x in range(len(k)):
@@ -216,7 +217,6 @@ def plot_sim_comparisons(k, v, f, a, mem_type_name, noise):
         f.tight_layout()
     return f, a
 
-# '''visualize keys and values'''
 # f1, axes1 = plt.subplots(2, 2, figsize=(10, 10))
 # f1, axes1 = plot_sim_comparisons(k[0],v[0],f1,axes1,'Original', noise)
 # f2, axes2 = plt.subplots(2, 2, figsize=(10, 10))

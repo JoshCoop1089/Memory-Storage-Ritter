@@ -48,6 +48,7 @@ def run_experiment(exp_settings):
 
     # Percent of original observations to corrupt
     noise_percent = exp_settings['noise_percent']
+
     # after `tp_corrupt`, turn off the noise
     t_noise_off = int(trial_length * noise_percent)
 
@@ -88,11 +89,12 @@ def run_experiment(exp_settings):
     learning_rate = 5e-4
     n_epochs = epochs
     
-    # Input is only observation, memory could be obs or context
+    # Input is only observation, memory could be obs, context, or hidden
     if exp_settings['agent_input'] != 'obs/context':
         x_dim = obs_dim
     
-    # Input is obs/context pair, network needs to be larger than obs_dim
+    # Input is obs/context pair, memory could be obs, context, obs/context, or hidden
+    # network needs to be larger than obs_dim
     # Will need to redefine this based on newer task label conventions
     else:
         x_dim = obs_dim + ctx_dim
@@ -137,26 +139,7 @@ def run_experiment(exp_settings):
                 agent.turn_off_encoding()
                 if t == trial_length-1 and m < n_unique_example:
                     agent.turn_on_encoding()
-                # print("_-_-"*10)
-                # print(X[m][t], Y[m][t])
-                # print(X[m][t][:obs_dim], Y[m][t])
-                # print(X[m][t][obs_dim:], Y[m][t])
-                # print("_-_-"*10)
 
-                # Use memory_storage_type to know what gets passed into the agent
-                    # Agent will further split inputs based on what gets stored in memory
-                    # X[m][t].view(1, 1, -1) -> Pass in both oberservation and context
-                    # X[m][t][:obs_dim].view(1, 1, -1) -> pass in only observation
-                    # X[m][t][obs_dim:].view(1, 1, -1) -> pass in only context
-                        # This won't happen but is useful to note for when it gets 
-                        # split in the agent for mem store tests
-
-                # recurrent computation at time t
-                # if agent_input == 'obs':
-                #     output_t, _ = agent(X[m][t][:obs_dim].view(1, 1, -1), h_t, c_t)
-                #     a_t, prob_a_t, v_t, h_t, c_t = output_t
-                # else: #agent_input == 'obs/context'
-                
                 # Pass in the whole observation/context pair, and split it up in the agent
                 output_t, _ = agent(X[m][t].view(1, 1, -1), h_t, c_t)
                 a_t, prob_a_t, v_t, h_t, c_t = output_t
@@ -193,7 +176,6 @@ def run_experiment(exp_settings):
 
         # Avg Similarity between queries and memory
         log_sims[i] += np.mean(agent.dnd.recall_sims)
-        # print(log_sims)
 
         # print out some stuff
         time_end = time.time()
