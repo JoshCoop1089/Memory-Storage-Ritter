@@ -6,8 +6,8 @@ import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
 
-from task import ContextualChoice
-from model import DNDLSTM as Agent
+from task import ContextualChoice_sl
+from sl_model import DNDLSTM as Agent
 from utils import compute_stats, to_sqnp
 from model.DND import compute_similarities
 from model.utils import get_reward, compute_returns, compute_a2c_loss
@@ -58,7 +58,7 @@ def run_experiment(exp_settings):
     ctx_dim = exp_settings['ctx_dim']
 
     # Task Choice
-    task = ContextualChoice(
+    task = ContextualChoice_sl(
         obs_dim = obs_dim, 
         ctx_dim = ctx_dim,
         trial_length = trial_length,
@@ -93,16 +93,17 @@ def run_experiment(exp_settings):
     
     # Input is only observation, memory could be obs, context, or hidden
     if exp_settings['agent_input'] != 'obs/context':
-        x_dim = obs_dim
+        input_lstm_dim = obs_dim
     
     # Input is obs/context pair, memory could be obs, context, obs/context, or hidden
     # network needs to be larger than obs_dim
     # Will need to redefine this based on newer task label conventions
     else:
-        x_dim = obs_dim + ctx_dim
+        input_lstm_dim = obs_dim + ctx_dim
 
     # init agent / optimizer
-    agent = Agent(x_dim, dim_hidden, dim_output, dict_len, exp_settings)
+    agent = Agent(input_lstm_dim, dim_hidden, dim_output,
+                     dict_len, exp_settings)
     optimizer = torch.optim.Adam(agent.parameters(), lr=learning_rate)
 
     '''train'''
@@ -121,6 +122,7 @@ def run_experiment(exp_settings):
         time_start = time.time()
         # get data for this epoch
         X, Y = task.sample(n_unique_example)
+        # print(X)
         # flush hippocampus
         agent.reset_memory()
         agent.turn_on_retrieval()
@@ -135,6 +137,10 @@ def run_experiment(exp_settings):
             # Clearing the per trial hidden state buffer
             agent.flush_trial_buffer()
 
+            # Freeze DNDLSTM Agent here to not interfere with embedding training
+            # HOW TO FREEZE AGENT IDKMYBFFJILL
+
+
             # loop over time, for one training example
             for t in range(trial_length):
                 # only save memory at the last time point
@@ -143,6 +149,8 @@ def run_experiment(exp_settings):
                     agent.turn_on_encoding()
 
                 # Pass in the whole observation/context pair, and split it up in the agent
+                # print(X[m][t])
+                # print(X[m][t].view(1, 1, -1))
                 output_t, _ = agent(X[m][t].view(1, 1, -1), h_t, c_t)
                 a_t, prob_a_t, v_t, h_t, c_t = output_t
 
@@ -158,6 +166,7 @@ def run_experiment(exp_settings):
                 cumulative_reward += r_t
                 log_Y_hat[i, m, t] = a_t.item()
 
+            # Unfreeze DNDLSTM Agent, after freezing embedding agent in save_memories
             returns = compute_returns(rewards)
             loss_policy, loss_value = compute_a2c_loss(probs, values, returns)
             loss = loss_policy + loss_value

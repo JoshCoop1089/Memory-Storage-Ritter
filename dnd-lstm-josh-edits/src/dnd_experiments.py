@@ -56,6 +56,7 @@ def graph_the_things(epochs, mem_type, num_repeats = 1, sim_thresh = False, kern
     exp_settings['agent_input'] = 'obs', 'obs/context'
     exp_settings['mem_store'] = 'obs/context', 'context', 'hidden'
     exp_settings['kaiser_key_update'] = True/False
+    exp_settings['hidden_layer_size'] = #
     """
 
     # Default Settings
@@ -70,6 +71,7 @@ def graph_the_things(epochs, mem_type, num_repeats = 1, sim_thresh = False, kern
     exp_settings['agent_input'] = 'obs/context'
     exp_settings['mem_store'] = 'obs/context'
     exp_settings['kaiser_key_update'] = False
+    exp_settings['hidden_layer_size'] = 20
 
 
     for num1 in range(len(mem_type)):
@@ -78,7 +80,7 @@ def graph_the_things(epochs, mem_type, num_repeats = 1, sim_thresh = False, kern
         for num2 in range(len_input2):
             runs = []
             sims = []
-            change = [f'M:{mem_type[num1]}', 'obs']
+            change = [f'M:{mem_type[num1]}']
             # context = 'no_context'
             kernel1 = 'cosine'
             
@@ -108,8 +110,8 @@ def graph_the_things(epochs, mem_type, num_repeats = 1, sim_thresh = False, kern
                 exp_settings['sim_threshhold'] = 0.4
                 # get_sim_threshhold(mem_type = 'Quarter', kernel = kernel1, context = context)
 
-            if exp_settings['agent_input'] == 'obs' and exp_settings['mem_store'] == 'obs/context':
-                continue
+            # if exp_settings['agent_input'] == 'obs' and exp_settings['mem_store'] == 'obs/context':
+            #     continue
 
             for iter in range(num_repeats):
                 print("\n", "- -"*10)
@@ -131,9 +133,9 @@ def graph_the_things(epochs, mem_type, num_repeats = 1, sim_thresh = False, kern
         log_sims.append([])
     return log_return, log_sims, k, v
 
-epochs = 20
+epochs = 2
 num_repeats = 1
-mem_type = ['context', 'obs/context', 'hidden']
+mem_type = ['obs/context', 'hidden']
 kernel = ['cosine', 'l2']
 noise = [0.5]
 # , 0.2, 0.5]

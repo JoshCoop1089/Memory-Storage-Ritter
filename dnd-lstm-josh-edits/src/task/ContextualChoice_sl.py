@@ -2,7 +2,7 @@ import torch
 import numpy as np
 
 
-class ContextualChoice():
+class ContextualChoice_sl():
 
     def __init__(self, obs_dim, ctx_dim,
                 trial_length=10,
@@ -13,12 +13,6 @@ class ContextualChoice():
         self.t_noise_off = t_noise_off
         # 2nd level params
         self.x_dim = self.obs_dim + self.ctx_dim
-
-        # Attempting a change in the main program, instead of the task
-        # self.change_task = change_task
-        # if change_task != 'no_context':
-        #     self.x_dim += self.ctx_dim
-
         self.y_dim = 1
         # input validation
         assert t_noise_off < trial_length
@@ -47,12 +41,6 @@ class ContextualChoice():
         # form the 2nd part of the data
         [observation_p2, target_p2, context_p2] = _permute_array_list(
             [observation_p1, target_p1, context_p1])
-
-        # Attempting a change in the main program, instead of the task
-        # if self.change_task == 'no_context':
-        #     observation_context_p1 = np.dstack([observation_p1])
-        #     observation_context_p2 = np.dstack([observation_p2])
-        # else:
 
         # concat observation and context
         observation_context_p1 = np.dstack([observation_p1, context_p1])
@@ -93,8 +81,15 @@ class ContextualChoice():
             loc=0, size=(self.t_noise_off, self.obs_dim)
         )
 
-        cue_t = np.random.normal(size=(self.ctx_dim, ))
-        cue = np.tile(cue_t, (self.trial_length, 1))
+        # generate a cue (changed to integer labelling for sup learning trials)
+        a = np.random.randint(n_examples)
+        b = np.zeros((1,n_examples))
+        b[0][a] = 1
+        # print(b)
+        cue = b
+
+        # cue_t = np.random.normal(size=(self.ctx_dim, ))
+        # cue = np.tile(cue_t, (self.trial_length, 1))
         return evidence, cue, target
 
 
@@ -136,7 +131,7 @@ if __name__ == "__main__":
     obs_dim = 20
     trial_length = 10
     t_noise_off = 5
-    task = ContextualChoice(
+    task = ContextualChoice_sl(
         obs_dim=obs_dim,
         trial_length=trial_length,
         t_noise_off=t_noise_off

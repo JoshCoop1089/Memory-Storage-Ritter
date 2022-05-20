@@ -1,0 +1,53 @@
+Things I need to implement:
+
+Memory Specific:
+
+Supervised Learning task where i create an encoder to act between the hidden state of the LSTM and the memory buffer.
+Will use triplet loss as suggested in Kaiser
+
+Make memory have task labels, so that a specific task is stored in only one stack, 
+    ie if there are 50 unique tasks, there will only be 50 memories stored
+
+New version of task:
+Pass in Observation, Context label
+Observation is sent into model, label is stored for reference
+Hidden state of model  for obs(x) will match with label(x) and memory will be checked for a label(x) stack already Present
+    how are we updating again? we said averaging was bleh, but that's how kaiser does
+
+Need to make an encoder which is trained on kaiser version of triplet loss to seperate out distinct tasks
+
+will encoder be able to work if the input task is changed?
+    it seems like this would be finding an embedding scheme for only one distinct task
+
+need to create a version of the og code which more closely matches ritters original idea of storing only context
+
+
+Task Specific:
+Figure out how to use omniglot as a second task to test different recalls
+How to implement context barcodes for omniglot, code per char class?
+OmniGlot Process:
+    get NN to output embeddings
+    Find a preformed convolutional autoencoder, train it on N classes
+    https://analyticsindiamag.com/how-to-implement-convolutional-autoencoder-in-pytorch-with-cuda/
+
+Data Presentation:
+Does using hidden state increase average reward compared to preformed context barcodes?
+does changing the similarity threshold for retrieval change reward using hidden state memory
+** How does fuzzy c-means applied to the buffer/memory combination change results?
+
+Supervised Learning of Hidden State Memory embeddings
+
+LSTM creates a hidden state for an obs/context pairing
+pass HS into SL to convert to embedding for mem search
+return LSTM state back to main function as before
+
+SL Architechture
+Inputs: Hidden State (dimension comes from LSTM choices)
+Hidden Layer: Size ??
+Output: Softmax Classifier (dimension is number of distinct contexts set in task)
+
+Questions:
+How do you strip off the classifier layer and only use the hidden layer as the output after the model is trained, or even while it is training?
+Is the embedding layer useful here? (IDR if this is a thing)
+
+

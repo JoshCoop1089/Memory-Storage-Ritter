@@ -1,21 +1,11 @@
-from hashlib import new
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
-
-# For clustering the hidden states before memory addition
-from sklearn.cluster import KMeans
 import numpy as np
-import random
 
 # constants
 ALL_KERNELS = ['cosine', 'l1', 'l2']
 ALL_POLICIES = ['1NN']
-
-# KMeans Warning Suppression
-import warnings
-warnings.filterwarnings('ignore')
-
-
 class DND():
     """The differentiable neural dictionary (DND) class. This enables episodic
     recall in a neural network.
@@ -47,7 +37,6 @@ class DND():
 
     def __init__(self, dict_len, memory_dim,
                 exp_settings):
-                # sim_threshhold, change=[], kernel='cosine'):
         # params
         self.dict_len = dict_len
         self.kernel = exp_settings['kernel']
@@ -55,8 +44,6 @@ class DND():
         # dynamic state
         self.encoding_off = False
         self.retrieval_off = False
-        # allocate space for memories
-        self.reset_memory()
 
         # allocate space for per trial hidden state buffer
         self.trial_buffer = [()]
@@ -66,8 +53,9 @@ class DND():
 
         # Experimental changes
         self.exp_settings = exp_settings
-        # self.change = change
-
+       
+        # allocate space for memories
+        self.reset_memory()
         # check everything
         self.check_config()
 
@@ -240,8 +228,6 @@ class DND():
                 self.keys.pop(0)
                 self.vals.pop(0)
 
-        # This is kind of a catchall, unsure if this would ever be reached at the current moment
-        # No mem updates, just slam all hidden states on end of memory
         else:
             for key in trial_hidden_states:
                 self.keys.append([torch.squeeze(key)])
@@ -259,7 +245,7 @@ class DND():
         except IndexError:
             self.keys.pop(0)
 
-    def get_memory(self, query_key):
+    def get_memory(self, query_key, context_label):
         """Perform a 1-NN search over dnd
 
         Parameters
@@ -301,7 +287,7 @@ class DND():
 
         # If the memory is close enough, it will need an update at end of trial
         self.trial_buffer.append((query_key, mem_id))
-        
+       
         return best_memory_val
 
     def _get_memory(self, similarities, policy='1NN'):

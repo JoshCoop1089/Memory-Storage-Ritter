@@ -9,15 +9,13 @@ import torch.nn as nn
 from model.DND import DND
 from model.A2C import A2C_linear
 
-
 # constants
 N_GATES = 4
-
 
 class DNDLSTM(nn.Module):
 
     def __init__(self, 
-            input_dim, hidden_dim, output_dim,
+            input_dim, hidden_lstm_dim, output_dim,
             dict_len,
             exp_settings,
             bias=True            
@@ -26,17 +24,17 @@ class DNDLSTM(nn.Module):
         self.ctx_dim = exp_settings['ctx_dim']
         self.obs_dim = exp_settings['obs_dim']
         self.input_dim = input_dim
-        self.hidden_dim = hidden_dim
+        self.hidden_dim = hidden_lstm_dim
         self.bias = bias
         self.exp_settings = exp_settings
         # input-hidden weights
-        self.i2h = nn.Linear(input_dim, (N_GATES+1) * hidden_dim, bias=bias)
+        self.i2h = nn.Linear(input_dim, (N_GATES+1) * hidden_lstm_dim, bias=bias)
         # hidden-hidden weights
-        self.h2h = nn.Linear(hidden_dim, (N_GATES+1) * hidden_dim, bias=bias)
+        self.h2h = nn.Linear(hidden_lstm_dim, (N_GATES+1) * hidden_lstm_dim, bias=bias)
         # dnd
-        self.dnd = DND(dict_len, hidden_dim, exp_settings)
+        self.dnd = DND(dict_len, hidden_lstm_dim, exp_settings)
         #policy
-        self.a2c = A2C_linear(hidden_dim, output_dim)
+        self.a2c = A2C_linear(hidden_lstm_dim, output_dim)
         # init
         self.reset_parameter()
 
@@ -58,10 +56,10 @@ class DNDLSTM(nn.Module):
         # Split the input for possible use later
         observation = x_t[0][:self.obs_dim].view(1, self.obs_dim)
         context = x_t[0][self.obs_dim:].view(1, self.ctx_dim)
-        # print('Obs: ', observation)
-        # print('CTX: ', context)
+        print('Obs: ', observation)
+        print('CTX: ', context)
 
-        # Only passing the observations into the model ()
+        # Only passing the observations into the model
         if self.exp_settings['agent_input'] == 'obs':
             x_t = observation
 
@@ -84,6 +82,9 @@ class DNDLSTM(nn.Module):
         # What portion of the input is being used in memory
         mem_store = self.exp_settings['mem_store']
 
+        # Embedding model should be unfrozen if this is the first query of a trial
+        # Might need a new flag to indicate start of trial
+
         # Query Memory
         ########################
         # All input is stored in memory (QiHong Github version)
@@ -103,6 +104,9 @@ class DNDLSTM(nn.Module):
         c_t = c_t + torch.mul(r_t, m_t)
         # get gated hidden state from the cell state
         h_t = torch.mul(o_t, c_t.tanh())
+
+        # Embedding model should be frozen after save_memory if on last moment of trial
+        # self.turn_on_embedding() should have been activated in main function
 
         # Saving Memory
         ########################
