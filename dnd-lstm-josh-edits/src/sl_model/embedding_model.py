@@ -5,33 +5,26 @@ import torch.nn.functional as F
 
 class Embedder(nn.Module):
 
-    def __init__(self,
-                 input_dim, num_contexts,
-                 exp_settings,
-                 bias=True
-                 ):
+    def __init__(self, exp_settings, bias=True):
         super(Embedder, self).__init__()
-        self.input_dim = input_dim
         self.bias = bias
         self.exp_settings = exp_settings
-        hidden_layer_size = exp_settings['hidden_layer_size']
+        self.input_dim = exp_settings['dim_hidden_lstm']
+        embedding_size = exp_settings['embedding_size']
+        self.barcode_size = exp_settings['barcode_size']
 
         # Basic Layers
-        self.fc1 = nn.Linear(input_dim, hidden_layer_size)
-        self.fc2 = nn.Linear(hidden_layer_size, num_contexts)
+        self.fc1 = nn.Linear(self.input_dim, embedding_size)
+        self.fc2 = nn.Linear(embedding_size, self.barcode_size)
 
         # init
         self.reset_parameter()
 
-    # Model should return an embedding and a context ID
-    # When used in get_memory, only the context ID is needed
-    # When used in save_memory, the embedding overwrites the current memory in mem[context_id]
-
+    # Model should return an embedding and a context
     def forward(self, h):
         x = F.relu(self.fc1(h))
         embedding = x
-        x = F.relu(self.fc2(x))
-        predicted_context = F.softmax(x, dim = 0)
+        predicted_context = F.relu(self.fc2(x))
         return embedding, predicted_context
 
     def reset_parameter(self):

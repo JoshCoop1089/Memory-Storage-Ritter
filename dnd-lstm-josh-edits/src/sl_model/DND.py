@@ -45,12 +45,10 @@ class DND():
         # params
         self.dict_len = dict_len
         self.kernel = exp_settings['kernel']
-        self.hidden_lstm_dim = hidden_lstm_dim
 
         # dynamic state
         self.encoding_off = False
         self.retrieval_off = False
-
 
         # allocate space for per trial hidden state buffer
         self.trial_buffer = [()]
@@ -59,18 +57,7 @@ class DND():
         self.exp_settings = exp_settings
 
         # Embedding model
-        self.unique_contexts = exp_settings['n_unique_examples']
-        if self.exp_settings['mem_store'] == 'obs/context':
-            self.embed_input = exp_settings['obs_dim'] + exp_settings['ctx_dim']
-
-        elif self.exp_settings['mem_store'] == 'context':
-            self.embed_input = exp_settings['ctx_dim']
-
-        else: #self.exp_settings['mem_store'] == 'hidden'
-            self.embed_input = hidden_lstm_dim
-
-        self.embedder = Embedder(
-            self.embed_input, self.unique_contexts, exp_settings)
+        self.embedder = Embedder(exp_settings)
         learning_rate = 5e-4
         self.embed_optimizer = torch.optim.Adam(self.embedder.parameters(), lr=learning_rate)
        
@@ -80,10 +67,10 @@ class DND():
         self.check_config()
 
     def reset_memory(self):
-        key_len = self.exp_settings['hidden_layer_size']
-        self.keys = [[torch.tensor(np.random.normal(size=(key_len, ))).view(1,key_len)]
-                                for _ in range(self.unique_contexts)]
-        self.vals = [0 for _ in range(self.unique_contexts)]
+        self.keys = [[]]
+        self.vals = []
+        self.key_context_map = {}
+        self.context_counter = 0
         self.recall_sims = []
         
     def check_config(self):
@@ -121,55 +108,14 @@ class DND():
 
         # ----End of Trial----
         # Embedding Model should get frozen after saving before going back to main LSTM agent
+        for param in self.embedder.parameters():
+                param.requires_grad = False
+
         # # Reached end of episode, different ways to update memory
         # mem_update_boolean = self.exp_settings['kaiser_key_update']
 
-        # The entire context/observation were passed into the agent
-        if self.exp_settings['agent_input'] == 'obs/context':
-
-            # All input is stored in memory (QiHong Github version)
-            if self.exp_settings['mem_store'] == 'obs/context':
-                self.keys.append([torch.squeeze(memory_key.data)])
-                # Dumb error catching due to how i organize the data for our version
-                try:
-                    test = self.keys[0][0]
-                except IndexError:
-                    self.keys.pop(0)
-                self.vals.append(torch.squeeze(memory_val.data))
-                # remove the oldest memory, if overflow
-                if len(self.keys) > self.dict_len:
-                    self.keys.pop(0)
-                    self.vals.pop(0)
-                return
-
-            # Only context is stored in memory (Ritter Version)
-            # figure this out after testing the dict inputs
-            elif self.exp_settings['mem_store'] == 'context':
-                self.keys.append([torch.squeeze(memory_key.data)])
-
-                # Dumb error catching due to how i organize the data for our version
-                try:
-                    test = self.keys[0][0]
-                except IndexError:
-                    self.keys.pop(0)
-                self.vals.append(torch.squeeze(memory_val.data))
-                # remove the oldest memory, if overflow
-                if len(self.keys) > self.dict_len:
-                    self.keys.pop(0)
-                    self.vals.pop(0)
-                return
-
-            # Hidden States stored in memory (Our Version)
-            # Need to write the supervised learning model to take info and embed
-            else: #mem_store == 'hidden'
-                keys = self.trial_buffer
-                trial_hidden_states = [keys[i] for i in range(len(keys)//4, len(keys), 2)]
-
-        # This was the version for Josh's tests
-        # Only the observation was passed into the agent
-        elif self.exp_settings['agent_input'] == 'obs':
-            keys = self.trial_buffer
-            trial_hidden_states = [keys[i] for i in range(len(keys)//4, len(keys), 2)]
+        keys = self.trial_buffer
+        trial_hidden_states = [keys[i] for i in range(len(keys)//4, len(keys), 2)]
 
         """
         # # Trying different versions of Kaiser Update averaging
@@ -257,27 +203,19 @@ class DND():
         # else:
         """
 
-        """
-        trial buffers hold hidden states
+        # Trial buffer contained embedding,location from get_memory
+        for embedding, context_location in trial_hidden_states:
+            old_emb = self.keys[context_location]
+            self.keys[context_location] = [torch.squeeze(embedding.data)] + old_emb
+            self.vals[context_location] = torch.squeeze(memory_val.data)
 
-        turn hidden states into embeddings
-        store embeddings in id of mem which contains same class
-        """
+        # # Dumb error catching due to how i organize the data for our version
+        # try:
+        #     test = self.keys[0][0]
+        # except IndexError:
+        #     self.keys.pop(0)
 
-        for key in trial_hidden_states:
-            embedding, pred_label = self.embedder(key[0])
-            context_id = int(torch.argmax(pred_label))
-            old_emb = self.keys[context_id]
-            self.keys[context_id] = [embedding] + old_emb
-            self.vals[context_id] = torch.squeeze(memory_val.data)
-
-        # Dumb error catching due to how i organize the data for our version
-        try:
-            test = self.keys[0][0]
-        except IndexError:
-            self.keys.pop(0)
-
-    def get_memory(self, query_key, context_label):
+    def get_memory(self, query_key, context_label, enable_embedder_layers):
         """Perform a 1-NN search over dnd
 
         Parameters
@@ -302,12 +240,31 @@ class DND():
         #     self.trial_buffer.append((query_key, -1))
         #     return _empty_memory(self.memory_dim)
 
-        # Unfreeze embedding model here?
 
 
         # Embedding Model Testing Ground
         agent = self.embedder
+
+        # Unfreeze embedding model here?
+        if enable_embedder_layers:
+            for param in agent.parameters():
+                param.requires_grad = True
+
         embedding, predicted_context = agent(query_key)
+
+        # Task not yet seen, no stored LSTM yet
+        if predicted_context not in self.key_context_map:
+            self.key_context_map[predicted_context] = self.context_counter
+            context_location = self.context_counter
+            self.context_counter += 1
+            best_memory_val = _empty_memory(self.memory_dim)
+
+        # Task seen, get LSTM attached to task
+        else:
+            context_location = self.key_context_map[predicted_context]
+            best_memory_val = self.vals[context_location]
+
+        # Update pass over the embedding model
         print("Embedding:", embedding)
         print("Predicted Context: ", predicted_context)
         criterion = nn.CrossEntropyLoss()
@@ -317,18 +274,10 @@ class DND():
         loss.backward(retain_graph=True)
         self.embed_optimizer.step()
 
-        # Identify best LSTM based on task
-        context_id = torch.argmax(predicted_context)
-        best_memory_val = self.vals[context_id]
-
         # Store embedding and predicted class label in trial_buffer
-        self.trial_buffer.append((embedding, context_id))
+        self.trial_buffer.append((embedding, context_location))
 
-        # First initialization of memory holds no LSTM states
-        if best_memory_val == 0:
-            return _empty_memory(self.memory_dim)
-
-        return best_memory_val
+        return best_memory_val, predicted_context
 
         query_embed = embedding
 

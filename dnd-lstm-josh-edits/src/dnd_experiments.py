@@ -67,8 +67,8 @@ def graph_the_things(epochs, mem_type, num_repeats = 1, sim_thresh = False, kern
     exp_settings['kernel'] = 'cosine'
     exp_settings['n_unique_examples'] = 5
     exp_settings['noise_percent'] = 0.5
-    exp_settings['obs_dim'] = 20
-    exp_settings['ctx_dim'] = 20
+    exp_settings['obs_dim'] = 10
+    exp_settings['ctx_dim'] = 10
     exp_settings['agent_input'] = 'obs'
     exp_settings['mem_store'] = 'obs/context'
     exp_settings['kaiser_key_update'] = False
@@ -117,7 +117,7 @@ def graph_the_things(epochs, mem_type, num_repeats = 1, sim_thresh = False, kern
             for iter in range(num_repeats):
                 print("\n", "- -"*10)
                 print('Iteration:', iter, change)
-                returns, loss, avg_sim, keys, vals = run_experiment_sl(exp_settings)
+                returns, loss, avg_sim, keys, vals = run_experiment(exp_settings)
                 runs.append(returns)
                 sims.append(avg_sim)
             avg_returns = np.mean(runs, axis = 0)                                     

@@ -15,26 +15,22 @@ N_GATES = 4
 class DNDLSTM(nn.Module):
 
     def __init__(self, 
-            input_dim, hidden_lstm_dim, output_dim,
-            dict_len,
-            exp_settings,
-            bias=True            
-    ):
+                    dim_input_lstm, dim_hidden_lstm, dim_output_lstm,
+                    dict_len, exp_settings, bias=True):
         super(DNDLSTM, self).__init__()
-        self.ctx_dim = exp_settings['ctx_dim']
-        self.obs_dim = exp_settings['obs_dim']
-        self.input_dim = input_dim
-        self.hidden_dim = hidden_lstm_dim
+        self.input_dim = dim_input_lstm
+        self.dim_hidden_lstm = dim_hidden_lstm
         self.bias = bias
         self.exp_settings = exp_settings
         # input-hidden weights
-        self.i2h = nn.Linear(input_dim, (N_GATES+1) * hidden_lstm_dim, bias=bias)
+        self.i2h = nn.Linear(dim_input_lstm, (N_GATES+1)
+                             * dim_hidden_lstm, bias=bias)
         # hidden-hidden weights
-        self.h2h = nn.Linear(hidden_lstm_dim, (N_GATES+1) * hidden_lstm_dim, bias=bias)
+        self.h2h = nn.Linear(dim_hidden_lstm, (N_GATES+1) * dim_hidden_lstm, bias=bias)
         # dnd
-        self.dnd = DND(dict_len, hidden_lstm_dim, exp_settings)
+        self.dnd = DND(dict_len, dim_hidden_lstm, exp_settings)
         #policy
-        self.a2c = A2C_linear(hidden_lstm_dim, output_dim)
+        self.a2c = A2C_linear(dim_hidden_lstm, dim_output_lstm)
         # init
         self.reset_parameter()
 
@@ -45,83 +41,54 @@ class DNDLSTM(nn.Module):
             elif 'bias' in name:
                 torch.nn.init.constant_(wts, 0)
 
-    def forward(self, x_t, h, c):
+    def forward(self, observation, barcode, h, c, enable_embedder_layers):
         # unpack activity
         h = h.view(h.size(1), -1)
         c = c.view(c.size(1), -1)
 
-        # Input is the obs/context paired together
-        x_t = x_t.view(x_t.size(1), -1)
-
-        # Split the input for possible use later
-        observation = x_t[0][:self.obs_dim].view(1, self.obs_dim)
-        context = x_t[0][self.obs_dim:].view(1, self.exp_settings['n_unique_examples'])
+        # Form the inputs nicely
+        observation = observation.view(1, self.exp_settings['num_arms'])
+        context = barcode.view(1, self.exp_settings['barcode_size'])
         print('Obs: ', observation)
         print('CTX: ', context)
 
-        # Only passing the observations into the model
-        if self.exp_settings['agent_input'] == 'obs':
+        if self.exp_settings['agent_input'] == 'obs/context':
+            x_t = torch.cat((observation, context), dim = 1)
+        else:  # self.exp_settings['agent_input'] == 'obs'
             x_t = observation
+
+        print(x_t)
 
         # transform the input info
         Wx = self.i2h(x_t)
         Wh = self.h2h(h)
         preact = Wx + Wh
         # get all gate values
-        gates = preact[:, : N_GATES * self.hidden_dim].sigmoid()
+        gates = preact[:, : N_GATES * self.dim_hidden_lstm].sigmoid()
         # split input(write) gate, forget gate, output(read) gate
-        f_t = gates[:, :self.hidden_dim]
-        i_t = gates[:, self.hidden_dim:2 * self.hidden_dim]
-        o_t = gates[:, 2*self.hidden_dim:3 * self.hidden_dim]
-        r_t = gates[:, -self.hidden_dim:]
+        f_t = gates[:, :self.dim_hidden_lstm]
+        i_t = gates[:, self.dim_hidden_lstm:2 * self.dim_hidden_lstm]
+        o_t = gates[:, 2*self.dim_hidden_lstm:3 * self.dim_hidden_lstm]
+        r_t = gates[:, -self.dim_hidden_lstm:]
         # stuff to be written to cell state
-        c_t_new = preact[:, N_GATES * self.hidden_dim:].tanh()
+        c_t_new = preact[:, N_GATES * self.dim_hidden_lstm:].tanh()
         # new cell state = gated(prev_c) + gated(new_stuff)
         c_t = torch.mul(f_t, c) + torch.mul(i_t, c_t_new)
 
-        # What portion of the input is being used in memory
-        mem_store = self.exp_settings['mem_store']
-
         # Embedding model should be unfrozen if this is the first query of a trial
-        # Might need a new flag to indicate start of trial
 
-        # Query Memory
-        ########################
-        # All input is stored in memory (QiHong Github version)
-        if mem_store == 'obs/context':
-            m_t = self.dnd.get_memory(x_t, context).tanh()
-
-        # Only context is stored in memory (Ritter Version)
-        elif mem_store == 'context':
-            m_t = self.dnd.get_memory(context, context).tanh()
-
-        # Hidden States stored in memory (Our Version)
-        else: #mem_store == 'hidden'
-            m_t = self.dnd.get_memory(h, context).tanh()
-        #######################
-
+        # Query Memory (hidden state passed into embedder, context used for embedder loss function)
+        mem, predicted_barcode = self.dnd.get_memory(h, context, enable_embedder_layers)
+        m_t = mem.tanh()
         # gate the memory; in general, can be any transformation of it
         c_t = c_t + torch.mul(r_t, m_t)
         # get gated hidden state from the cell state
         h_t = torch.mul(o_t, c_t.tanh())
 
         # Embedding model should be frozen after save_memory if on last moment of trial
-        # self.turn_on_embedding() should have been activated in main function
-
-        # Saving Memory
-        ########################
-        # All input is stored in memory (QiHong Github version)
-        if mem_store == 'obs/context':
-            self.dnd.save_memory(x_t, c_t)
-
-        # Only context is stored in memory (Ritter Version)
-        elif mem_store == 'context':
-            self.dnd.save_memory(context, c_t)
-
-        # Hidden States stored in memory (Our Version)
-        else: #mem_store == 'hidden'
-            self.dnd.save_memory(h_t, c_t)
-        #######################
+        # self.turn_on_encoding() should have been activated in main function
+        # Saving Memory (hidden state passed into embedder, embedding is key and c_t is val)
+        self.dnd.save_memory(h_t, c_t)
 
         # policy
         pi_a_t, v_t = self.a2c.forward(h_t)
@@ -131,7 +98,7 @@ class DNDLSTM(nn.Module):
         h_t = h_t.view(1, h_t.size(0), -1)
         c_t = c_t.view(1, c_t.size(0), -1)
         # fetch activity
-        output = [a_t, prob_a_t, v_t, h_t, c_t]
+        output = [a_t, predicted_barcode, prob_a_t, v_t, h_t, c_t]
         cache = [f_t, i_t, o_t, r_t, m_t]
         return output, cache
 
@@ -154,8 +121,8 @@ class DNDLSTM(nn.Module):
         return a_t, log_prob_a_t
 
     def get_init_states(self, scale=.1):
-        h_0 = torch.randn(1, 1, self.hidden_dim) * scale
-        c_0 = torch.randn(1, 1, self.hidden_dim) * scale
+        h_0 = torch.randn(1, 1, self.dim_hidden_lstm) * scale
+        c_0 = torch.randn(1, 1, self.dim_hidden_lstm) * scale
         return h_0, c_0
 
     def flush_trial_buffer(self):

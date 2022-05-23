@@ -45,38 +45,45 @@ import random
 
 class ContextualBandit():
 
-    def __init__(self, pulls_per_episode, episodes_per_epoch, noise_percent):
+    def __init__(self, pulls_per_episode, episodes_per_epoch, noise_observations):
 
         # Task Specific
         self.pulls_per_episode = pulls_per_episode
         self.episodes_per_epoch = episodes_per_epoch
-        self.noise_percent = noise_percent
+        self.noise_observations = noise_observations
     
         # input validation
-        assert 0 <= noise_percent < 1
+        # Noise not implemented yet in observations
+        assert 0 <= noise_observations < pulls_per_episode
 
     def sample(
-            self, num_arms, num_barcodes,
-            to_torch=True,
-    ):
-        """sample a task sequence
-
-        Parameters
-        ----------
-        n_unique_examples : type
-            Description of parameter `n_unique_examples`.
-        to_torch : type
-            Description of parameter `to_torch`.
-
-        Returns
-        -------
-        type
-            Description of returned object.
-
+            self, num_arms, num_barcodes, barcode_size,
+            to_torch=True):
         """
+        Get a single epochs worth of observations and rewards for a newly created barcode mapping
+
+        Parameters:
+        num_arms: int
+            Number of unique arms which can be pulled
+        num_barcodes: int
+            Number of unique contexts which can map to a specific arm
+            (Length of barcode is same as number of arms for now, can be changed)
+
+        Returns:
+        observations: tensor
+            a sequence of arm pulls
+        barcodes: tensor
+            the context for each arm pull
+        rewards: tensor
+            the reward gained from an armpull in that specific context
+        epoch_mapping: dict {barcode -> arm}
+            shows which arm has the 90% reward chance per barcode
+        """
+
         # Arm Specific
         self.num_arms = num_arms
         self.num_barcodes = num_barcodes
+        self.barcode_size = barcode_size
 
         epoch_mapping = self.generate_barcode_mapping()
         observation_p1, reward_p1, barcode_p1 = self.generate_trials_info(epoch_mapping)
@@ -91,44 +98,35 @@ class ContextualBandit():
             observations = to_pth(observations)
             barcodes = to_pth(barcodes)
             rewards = to_pth(rewards, pth_dtype=torch.LongTensor)
-        return observations, barcodes, rewards
+        return observations, barcodes, rewards, epoch_mapping
 
     def generate_barcode_mapping(self):
         barcode_bag = set()
         mapping = {}
-        num_arms, num_barcodes = self.num_arms, self.num_barcodes
 
         # Create a set of unique binary barcodes
-        # Array2String allows barcodes to be hashable in set
-        while len(barcode_bag) < num_barcodes:
-            barcode = np.random.randint(0, 2, (1, num_arms))
+        # Array2String allows barcodes to be hashable in set to get uniqueness guarantees
+        while len(barcode_bag) < self.num_barcodes:
+            barcode = np.random.randint(0, 2, (1, self.barcode_size))
             # barcode -> string starts out at '[[1 1 0]]', thus the reductions on the end
             barcode_string = np.array2string(barcode)[2:-2].replace(" ", "")
             barcode_bag.add(barcode_string)
 
         barcode_bag_list = list(barcode_bag)
 
-        # Generate mapping of barcode to arm
+        # Generate mapping of barcode to good arm
         for barcode in barcode_bag_list:
-            arm = random.randint(0, num_arms)
+            arm = random.randint(0, self.num_arms)
             mapping[barcode] = arm
 
         # At least one barcode for every arm gets guaranteed
-        unique_guarantees = random.sample(barcode_bag_list, num_arms)
+        unique_guarantees = random.sample(barcode_bag_list, self.num_arms)
         for arm, guarantee in enumerate(unique_guarantees):
             mapping[guarantee] = arm
-
-        # mapping now holds reward information for a given barcode
 
         return mapping
 
     def generate_trials_info(self, mapping):
-        # Create the trial sample bag
-        trial_barcode_bag = []
-        for barcode in mapping:
-            for i in range(self.num_barcodes):
-                trial_barcode_bag.append(barcode)
-        random.shuffle(trial_barcode_bag)
 
         """
         LSTM Input Format:
@@ -137,10 +135,22 @@ class ContextualBandit():
 
         [100, barcode2, 0] would be one pull in one trial for barcode2
         this would be a pull on arm0, and based on the mapping of barcode2, returns a reward of 0
+        
+        one episode is a sequence of 10 trials drawn from barcode bag
+        one epoch is the full contents of barcode bag
         """
+
+        # Create the trial sample bag with num_barcode instances of each unique barcode
+        # 4 unique barcodes -> 16 total barcodes in bag, 4 copies of each unique barcode
+        trial_barcode_bag = []
+        for barcode in mapping:
+            for i in range(self.num_barcodes):
+                trial_barcode_bag.append(barcode)
+        random.shuffle(trial_barcode_bag)
+
         observations = np.zeros((self.num_barcodes**2, self.pulls_per_episode, self.num_arms))
         rewards = np.zeros((self.num_barcodes**2, self.pulls_per_episode, 1))
-        barcodes = np.zeros((self.num_barcodes**2, self.pulls_per_episode, self.num_arms))
+        barcodes = np.zeros((self.num_barcodes**2, self.pulls_per_episode, self.barcode_size))
 
         for episode_num, barcode in enumerate(trial_barcode_bag):
             observations[episode_num], rewards[episode_num], barcodes[episode_num] = self.generate_one_episode(barcode, mapping)
@@ -148,10 +158,11 @@ class ContextualBandit():
         return observations, rewards, barcodes
 
     def generate_one_episode(self, barcode, mapping):
-        #How does noise change the observation? 
 
         # Generate arm pulling sequence for single trial
         # Creates an Arms X Pulls matrix, using np.eye to onehotencode arm pulls
+        # Unsure if this is actually doing what i want, given docs say it shouldn't be able to random sample rows... and that's what i'm trying to do
+        # But also it works when i tried it?  Need to check this more
         trial_pulls = np.eye(self.num_arms)[np.random.choice(
             self.num_arms,self.pulls_per_episode)]
 
@@ -168,9 +179,12 @@ class ContextualBandit():
             else:
                 reward = int(np.random.random() < 0.1)
             trial_rewards[pull] = reward
+
+        # After generation of reward, use noise to obscure input for first x pulls of trial
+        # Unsure how to implement this, just random generate a one hot encode, make more than one input, keep binary?
         
         # Transform the barcode back to an array for tensor broadcasting
-        bar_ar = np.zeros((self.pulls_per_episode, self.num_arms))
+        bar_ar = np.zeros((self.pulls_per_episode, self.barcode_size))
         for num in range(self.pulls_per_episode):
             for id, val in enumerate(barcode):
                 bar_ar[num][id] = int(val)
@@ -181,12 +195,22 @@ def to_pth(np_array, pth_dtype=torch.FloatTensor):
     return torch.tensor(np_array).type(pth_dtype)
 
 if __name__ == '__main__':
-    task = ContextualBandit(3, 1, 0)
 
-    obs, bar, reward = task.sample(2, 2)
-    print("Obs:", obs)
-    print("Bar:", bar)
-    print("Reward:", reward)
+    pulls = 4
+    episodes = 1
+    noise = 0
+    num_arms = 3
+    num_barcodes = 4
+    barcode_size = 3
+    task = ContextualBandit(pulls, episodes, noise)
+
+    obs, bar, reward, map = task.sample(num_arms, num_barcodes, barcode_size)
+    outp = np.dstack([obs, bar, reward])
+    # print("Obs:", obs)
+    # print("Bar:", bar)
+    # print("Reward:", reward)
+    print("Mapping:", map)
+    print("Concat:", outp)
 
 """
 Observation:

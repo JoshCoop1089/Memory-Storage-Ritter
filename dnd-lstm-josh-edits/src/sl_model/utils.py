@@ -60,6 +60,22 @@ def get_reward(a_t, a_t_targ):
         r_t = 0
     return torch.tensor(r_t).type(torch.FloatTensor).data
 
+def get_reward_from_assumed_barcode(a_t, reward_from_obs, assumed_barcode, mapping):
+    """
+    Uses the embedding models prediction of a barcode to pull a specific arm.
+    The reward from that pull is checked against the reward from the observation.
+    Actual LSTM reward is if those two rewards match each other.
+    """
+    best_arm = mapping[assumed_barcode]
+    if a_t == best_arm:
+        reward = int(np.random.random() < 0.9)
+    else:
+        reward = int(np.random.random() < 0.1)
+
+    matched_reward = int(torch.equal(reward, reward_from_obs))
+    return torch.tensor(matched_reward).type(torch.FloatTensor).data
+    
+
 
 def compute_a2c_loss(probs, values, returns):
     """compute the objective node for policy/value networks
