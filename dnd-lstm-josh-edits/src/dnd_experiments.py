@@ -1,8 +1,9 @@
 from cProfile import run
 from cmath import log
 from contextual_choice import run_experiment
+from contextual_choice_sl import run_experiment_sl
 from utils import compute_stats, to_sqnp
-from model.DND import compute_similarities
+from sl_model.DND import compute_similarities
 import seaborn as sns
 import matplotlib.pyplot as plt
 import numpy as np
@@ -64,14 +65,14 @@ def graph_the_things(epochs, mem_type, num_repeats = 1, sim_thresh = False, kern
     exp_settings['epochs'] = epochs
     exp_settings['sim_threshhold'] = -200
     exp_settings['kernel'] = 'cosine'
-    exp_settings['n_unique_examples'] = 50
+    exp_settings['n_unique_examples'] = 5
     exp_settings['noise_percent'] = 0.5
-    exp_settings['obs_dim'] = 128
-    exp_settings['ctx_dim'] = 128
-    exp_settings['agent_input'] = 'obs/context'
+    exp_settings['obs_dim'] = 20
+    exp_settings['ctx_dim'] = 20
+    exp_settings['agent_input'] = 'obs'
     exp_settings['mem_store'] = 'obs/context'
     exp_settings['kaiser_key_update'] = False
-    exp_settings['hidden_layer_size'] = 20
+    exp_settings['hidden_layer_size'] = 16
 
 
     for num1 in range(len(mem_type)):
@@ -116,7 +117,7 @@ def graph_the_things(epochs, mem_type, num_repeats = 1, sim_thresh = False, kern
             for iter in range(num_repeats):
                 print("\n", "- -"*10)
                 print('Iteration:', iter, change)
-                returns, loss, avg_sim, keys, vals = run_experiment(exp_settings)
+                returns, loss, avg_sim, keys, vals = run_experiment_sl(exp_settings)
                 runs.append(returns)
                 sims.append(avg_sim)
             avg_returns = np.mean(runs, axis = 0)                                     

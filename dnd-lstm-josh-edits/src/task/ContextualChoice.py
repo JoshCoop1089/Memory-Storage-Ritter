@@ -1,7 +1,6 @@
 import torch
 import numpy as np
 
-
 class ContextualChoice():
 
     def __init__(self, obs_dim, ctx_dim,

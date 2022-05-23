@@ -6,13 +6,13 @@ import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
 
-from task import ContextualChoice_sl
+from task.ContextualChoiceSl import ContextualChoiceSl
 from sl_model import DNDLSTM as Agent
 from utils import compute_stats, to_sqnp
-from model.DND import compute_similarities
-from model.utils import get_reward, compute_returns, compute_a2c_loss
+from sl_model.DND import compute_similarities
+from sl_model.utils import get_reward, compute_returns, compute_a2c_loss
 
-def run_experiment(exp_settings):
+def run_experiment_sl(exp_settings):
     sns.set(style='white', context='talk', palette='colorblind')
     """
     exp_settings is a dict with parameters as keys:
@@ -58,14 +58,14 @@ def run_experiment(exp_settings):
     ctx_dim = exp_settings['ctx_dim']
 
     # Task Choice
-    task = ContextualChoice_sl(
+    task = ContextualChoiceSl(
         obs_dim = obs_dim, 
         ctx_dim = ctx_dim,
         trial_length = trial_length,
         t_noise_off = t_noise_off
     )
 
-    agent_input = exp_settings['agent_input']
+    # agent_input = exp_settings['agent_input']
 
     """
     exp_settings['randomize']
@@ -139,7 +139,8 @@ def run_experiment(exp_settings):
 
             # Freeze DNDLSTM Agent here to not interfere with embedding training
             # HOW TO FREEZE AGENT IDKMYBFFJILL
-
+            for param in agent.parameters():
+                param.requires_grad = False
 
             # loop over time, for one training example
             for t in range(trial_length):
@@ -167,6 +168,9 @@ def run_experiment(exp_settings):
                 log_Y_hat[i, m, t] = a_t.item()
 
             # Unfreeze DNDLSTM Agent, after freezing embedding agent in save_memories
+            for param in agent.parameters():
+                param.requires_grad = True
+
             returns = compute_returns(rewards)
             loss_policy, loss_value = compute_a2c_loss(probs, values, returns)
             loss = loss_policy + loss_value

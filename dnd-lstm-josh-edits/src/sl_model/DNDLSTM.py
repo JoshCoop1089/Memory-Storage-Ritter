@@ -6,8 +6,8 @@ Proceedings of the International Conference on Machine Learning (ICML).
 """
 import torch
 import torch.nn as nn
-from model.DND import DND
-from model.A2C import A2C_linear
+from sl_model.DND import DND
+from sl_model.A2C import A2C_linear
 
 # constants
 N_GATES = 4
@@ -55,7 +55,7 @@ class DNDLSTM(nn.Module):
 
         # Split the input for possible use later
         observation = x_t[0][:self.obs_dim].view(1, self.obs_dim)
-        context = x_t[0][self.obs_dim:].view(1, self.ctx_dim)
+        context = x_t[0][self.obs_dim:].view(1, self.exp_settings['n_unique_examples'])
         print('Obs: ', observation)
         print('CTX: ', context)
 

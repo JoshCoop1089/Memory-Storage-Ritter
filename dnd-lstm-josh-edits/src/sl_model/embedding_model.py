@@ -30,7 +30,8 @@ class Embedder(nn.Module):
     def forward(self, h):
         x = F.relu(self.fc1(h))
         embedding = x
-        predicted_context = F.softmax(self.fc2(x), dim = 1)
+        x = F.relu(self.fc2(x))
+        predicted_context = F.softmax(x, dim = 0)
         return embedding, predicted_context
 
     def reset_parameter(self):
