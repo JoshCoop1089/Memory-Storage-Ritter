@@ -66,11 +66,19 @@ def get_reward_from_assumed_barcode(a_t, reward_from_obs, assumed_barcode, mappi
     The reward from that pull is checked against the reward from the observation.
     Actual LSTM reward is if those two rewards match each other.
     """
-    best_arm = mapping[assumed_barcode]
-    if a_t == best_arm:
-        reward = int(np.random.random() < 0.9)
-    else:
-        reward = int(np.random.random() < 0.1)
+    try:
+        best_arm = mapping[assumed_barcode]
+        if a_t == best_arm:
+            reward = torch.tensor([int(np.random.random() < 0.9)])
+        else:
+            reward = torch.tensor([int(np.random.random() < 0.1)])
+
+    # Penalize a predicted barcode which isn't a part of the mapping for the epoch
+    except Exception:
+            reward = torch.tensor([-1])
+
+    # print("P-R:", reward, "R-R:", reward_from_obs)
+        
 
     matched_reward = int(torch.equal(reward, reward_from_obs))
     return torch.tensor(matched_reward).type(torch.FloatTensor).data

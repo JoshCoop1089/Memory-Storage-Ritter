@@ -45,6 +45,7 @@ class DND():
         # params
         self.dict_len = dict_len
         self.kernel = exp_settings['kernel']
+        self.hidden_lstm_dim = hidden_lstm_dim
 
         # dynamic state
         self.encoding_off = False
@@ -56,11 +57,6 @@ class DND():
         # Experimental changes
         self.exp_settings = exp_settings
 
-        # Embedding model
-        self.embedder = Embedder(exp_settings)
-        learning_rate = 5e-4
-        self.embed_optimizer = torch.optim.Adam(self.embedder.parameters(), lr=learning_rate)
-       
         # allocate space for memories
         self.reset_memory()
         # check everything
@@ -69,9 +65,16 @@ class DND():
     def reset_memory(self):
         self.keys = [[]]
         self.vals = []
+        # self.keys = [[] for _ in range(self.exp_settings['num_barcodes'])]
+        # self.vals = [0 for _ in range(self.exp_settings['num_barcodes'])]
         self.key_context_map = {}
         self.context_counter = 0
         self.recall_sims = []
+
+        # Embedding model (reset every epoch due to changing contexts)
+        self.embedder = Embedder(self.exp_settings)
+        learning_rate = 5e-4
+        self.embed_optimizer = torch.optim.Adam(self.embedder.parameters(), lr=learning_rate)
         
     def check_config(self):
         assert self.dict_len > 0
@@ -108,8 +111,9 @@ class DND():
 
         # ----End of Trial----
         # Embedding Model should get frozen after saving before going back to main LSTM agent
-        for param in self.embedder.parameters():
-                param.requires_grad = False
+        for name, param in self.embedder.named_parameters():
+            if param.requires_grad:
+                print (name, param.data)
 
         # # Reached end of episode, different ways to update memory
         # mem_update_boolean = self.exp_settings['kaiser_key_update']
@@ -209,13 +213,7 @@ class DND():
             self.keys[context_location] = [torch.squeeze(embedding.data)] + old_emb
             self.vals[context_location] = torch.squeeze(memory_val.data)
 
-        # # Dumb error catching due to how i organize the data for our version
-        # try:
-        #     test = self.keys[0][0]
-        # except IndexError:
-        #     self.keys.pop(0)
-
-    def get_memory(self, query_key, context_label, enable_embedder_layers):
+    def get_memory(self, query_key, context_label):
         """Perform a 1-NN search over dnd
 
         Parameters
@@ -228,84 +226,56 @@ class DND():
         a row vector
             a DND value, representing the memory content
         """
-        # # Dumb error catching due to how i organize the data for our version
-        # try:
-        #     test = self.keys[0][0]
-        #     n_memories = len(self.keys)
-        # except IndexError:
-        #     n_memories = 0
-
-        # # if no memory, return the zero vector 
-        # if n_memories == 0 or self.retrieval_off:
-        #     self.trial_buffer.append((query_key, -1))
-        #     return _empty_memory(self.memory_dim)
-
-
-
         # Embedding Model Testing Ground
         agent = self.embedder
 
-        # Unfreeze embedding model here?
-        if enable_embedder_layers:
-            for param in agent.parameters():
-                param.requires_grad = True
+        # Unfreeze Embedder to train
+        for param in agent.parameters():
+            param.requires_grad = True
 
         embedding, predicted_context = agent(query_key)
+        # print("Raw:", predicted_context)
+        # print("Embedding:", embedding)
+        
+        # Update pass over the embedding model
+        criterion = nn.CrossEntropyLoss()
+        loss = criterion(predicted_context, context_label)
+        # print("Loss: ", loss)
+        self.embed_optimizer.zero_grad()
+        loss.backward(retain_graph=True)
+        self.embed_optimizer.step()
+       
+        # Predicted context will be tensor of floats, need to transform into binarystring for key mapping
+        predicted_context = torch.where(predicted_context > 0.5, 1, 0)  
+        # print('P-CTX:', predicted_context)
+        # barcode -> string starts out at '[[1 1 0]]', thus the reductions on the end
+        predicted_context = np.array2string(predicted_context.numpy())[2:-2].replace(" ", "")
 
         # Task not yet seen, no stored LSTM yet
         if predicted_context not in self.key_context_map:
             self.key_context_map[predicted_context] = self.context_counter
             context_location = self.context_counter
+            self.keys.append([])
+            self.vals.append(0)
             self.context_counter += 1
-            best_memory_val = _empty_memory(self.memory_dim)
+            best_memory_val = _empty_memory(self.hidden_lstm_dim)
 
         # Task seen, get LSTM attached to task
         else:
             context_location = self.key_context_map[predicted_context]
             best_memory_val = self.vals[context_location]
-
-        # Update pass over the embedding model
-        print("Embedding:", embedding)
-        print("Predicted Context: ", predicted_context)
-        criterion = nn.CrossEntropyLoss()
-        loss = criterion(predicted_context, context_label)
-        print("Loss: ", loss)
-        self.embed_optimizer.zero_grad()
-        loss.backward(retain_graph=True)
-        self.embed_optimizer.step()
+            # First reference of a task, but before LSTM is saved to memory
+            if type(best_memory_val) == int:
+                best_memory_val = _empty_memory(self.hidden_lstm_dim)
 
         # Store embedding and predicted class label in trial_buffer
         self.trial_buffer.append((embedding, context_location))
 
+        # Freeze Embedder model until next memory retrieval
+        for param in agent.parameters():
+            param.requires_grad = False
+
         return best_memory_val, predicted_context
-
-        query_embed = embedding
-
-        # There shouldn't be a search over the memory keys, it should just take the predicted label as the id to overwrite
-
-        # compute similarity(query, memory_i ), for all i
-        # due to storing the list of updated memories in self.keys, 
-        # need to iterate over it and select the first in the list, 
-        # which is the most recent memory in that specific sublist
-        key_list = [self.keys[x][0] for x in range(len(self.keys))]
-        similarities = compute_similarities(query_embed, key_list, self.kernel)
-
-        # get the best-match memory
-        best_memory_val, mem_id = self._get_memory(similarities)
-
-        # If sim threshold between query and closest mem not enough, return empty memory
-        if self.recall_sims[-1] <= self.sim_threshhold:
-            self.trial_buffer.append((query_key, -1))
-            return _empty_memory(self.memory_dim)
-
-        # If the memory is close enough, it will need an update at end of trial
-        self.trial_buffer.append((query_key, mem_id))
-
-        # First initialization of memory holds no LSTM states
-        if best_memory_val == 0:
-            return _empty_memory(self.memory_dim)
-        
-        return best_memory_val
 
     def _get_memory(self, similarities, policy='1NN'):
         """get the episodic memory according to some policy

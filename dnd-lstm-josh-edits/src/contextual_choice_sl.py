@@ -87,7 +87,7 @@ def run_experiment_sl(exp_settings):
         dim_input_lstm = num_arms + barcode_size
 
     # set params
-    dim_hidden_lstm = 32
+    dim_hidden_lstm = exp_settings['dim_hidden_lstm']
     dim_output_lstm = num_arms
     dict_len = num_barcodes #only one memory slot per barcode
     learning_rate = 5e-4
@@ -116,7 +116,6 @@ def run_experiment_sl(exp_settings):
         # If this does change, will need to retrain the embedder model every epoch as well
         # get data for this epoch
         observations, barcodes, reward_from_obs, epoch_mapping = task.sample(num_arms, num_barcodes, barcode_size)
-        # print(X)
         # flush hippocampus
         agent.reset_memory()
         agent.turn_on_retrieval()
@@ -132,12 +131,6 @@ def run_experiment_sl(exp_settings):
             # Clearing the per trial hidden state buffer
             agent.flush_trial_buffer()
 
-            # # Freeze DNDLSTM Agent here to not interfere with embedding training
-            # # HOW TO FREEZE AGENT IDKMYBFFJILL
-            for param in agent.parameters():
-                param.requires_grad = False
-                print(param)
-
             # loop over time, for one training example
             for t in range(pulls_per_episode):
                 # only save memory at the last time point
@@ -145,20 +138,16 @@ def run_experiment_sl(exp_settings):
                 if t == pulls_per_episode-1 and m < episodes_per_epoch:
                     agent.turn_on_encoding()
 
-                # Flag to turn on gradients in the embedder model
-                enable_embedder_layers = False
-                if t == 0:
-                    enable_embedder_layers = True
-
                 output_t, _ = agent(observations[m][t].view(1, 1, -1), 
                                         barcodes[m][t].view(1, 1, -1),
-                                        h_t, c_t,
-                                        enable_embedder_layers)
+                                        h_t, c_t)
                 a_t, assumed_barcode, prob_a_t, v_t, h_t, c_t = output_t
 
                 # compute immediate reward
-                r_t = get_reward_from_assumed_barcode(a_t, rewards[m][t], 
+                r_t = get_reward_from_assumed_barcode(a_t, reward_from_obs[m][t], 
                                                     assumed_barcode, epoch_mapping)
+                # if r_t:
+                #     print('reward!')
 
                 # log
                 probs.append(prob_a_t)
@@ -168,19 +157,18 @@ def run_experiment_sl(exp_settings):
                 log_Y_hat[i, m, t] = a_t.item()
 
                 # Does the embedder predicted context match the actual context?
-                # barcode -> string starts out at '[[1 1 0]]', thus the reductions on the end
-                barcode_ground = np.array2string(barcodes[m][t].numpy())[2:-2].replace(" ", "")
-                embedder_accuracy += (barcode_ground == assumed_barcode)
-
-            # Unfreeze DNDLSTM Agent, after freezing embedding agent in save_memories
-            for param in agent.parameters():
-                param.requires_grad = True
+                real_bc = np.array2string(barcodes[m][t].numpy())[
+                    1:-1].replace(" ", "").replace(".", "")
+                # print(real_bc, assumed_barcode)
+                embedder_accuracy += int(real_bc == assumed_barcode)
+                # if real_bc == assumed_barcode:
+                #     print("context match!")
 
             returns = compute_returns(rewards)
             loss_policy, loss_value = compute_a2c_loss(probs, values, returns)
             loss = loss_policy + loss_value
             optimizer.zero_grad()
-            loss.backward()
+            loss.backward(retain_graph=True)
             optimizer.step()
 
             # log
@@ -196,8 +184,8 @@ def run_experiment_sl(exp_settings):
         # # print(len(agent.dnd.recall_sims), (n_trials-1) * trial_length)
         # valid_pulls[i] = sum(good_pull)/ ((n_trials-1) * trial_length)
 
-        # Avg Similarity between queries and memory
-        log_sims[i] += np.mean(agent.dnd.recall_sims)
+        # # Avg Similarity between queries and memory
+        # log_sims[i] += np.mean(agent.dnd.recall_sims)
 
         # print out some stuff
         time_end = time.time()
@@ -208,13 +196,14 @@ def run_experiment_sl(exp_settings):
         )
     avg_embedder_accuracy = np.mean(log_embedder_accuracy)
     avg_time = np.mean(run_time)
-    avg_sim = np.mean(log_sims)
+    # avg_sim = np.mean(log_sims)
     print(f"-*-*- \n\tAvg Time: {avg_time:.2f} | Embedder Accuracy over Epoch: {avg_embedder_accuracy:.2f}\n-*-*-")
 
     # Additional returns to graph out of this file
-    keys, vals = agent.get_all_mems_josh()
+    # keys, vals = agent.get_all_mems_josh()
 
-    return log_return, log_loss_value, log_embedder_accuracy, keys, vals
+    return log_return, log_loss_value, log_embedder_accuracy
+    # , keys, vals
 
 
 if __name__  == '__main__':
@@ -224,10 +213,22 @@ if __name__  == '__main__':
     exp_settings['kernel'] = 'cosine'
     exp_settings['noise_percent'] = 0.5
     exp_settings['agent_input'] = 'obs'
+    exp_settings['dim_hidden_lstm'] = 32
     exp_settings['embedding_size'] = 16
-    exp_settings['num_arms'] = 3
-    exp_settings['barcode_size'] = 3
-    exp_settings['num_barcodes'] = 4
-    exp_settings['pulls_per_episode'] = 4
+    exp_settings['num_arms'] = 4
+    exp_settings['barcode_size'] = 4
+    exp_settings['num_barcodes'] = 10
+    exp_settings['pulls_per_episode'] = 20
 
-    a,b,c,d,e = run_experiment_sl(exp_settings)
+    log_return, log_loss_value, log_embedder_accuracy = run_experiment_sl(exp_settings)
+
+    f, axes = plt.subplots(1, 2, figsize=(8, 3))
+    axes[0].plot(log_return)
+    axes[0].set_ylabel('Return')
+    axes[0].set_xlabel('Epoch')
+    axes[1].plot(log_loss_value)
+    axes[1].set_ylabel('Value loss')
+    axes[1].set_xlabel('Epoch')
+    sns.despine()
+    f.tight_layout()
+    plt.show

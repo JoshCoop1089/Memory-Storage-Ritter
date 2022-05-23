@@ -1,3 +1,4 @@
+from numpy import int8
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -14,17 +15,17 @@ class Embedder(nn.Module):
         self.barcode_size = exp_settings['barcode_size']
 
         # Basic Layers
-        self.fc1 = nn.Linear(self.input_dim, embedding_size)
-        self.fc2 = nn.Linear(embedding_size, self.barcode_size)
+        self.h2e = nn.Linear(self.input_dim, embedding_size, bias=bias)
+        self.e2c = nn.Linear(embedding_size, self.barcode_size, bias=bias)
 
         # init
         self.reset_parameter()
 
     # Model should return an embedding and a context
     def forward(self, h):
-        x = F.relu(self.fc1(h))
+        x = F.relu(self.h2e(h))
         embedding = x
-        predicted_context = F.relu(self.fc2(x))
+        predicted_context = torch.sigmoid(self.e2c(x))
         return embedding, predicted_context
 
     def reset_parameter(self):

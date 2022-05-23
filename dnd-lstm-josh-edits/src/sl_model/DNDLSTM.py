@@ -41,7 +41,7 @@ class DNDLSTM(nn.Module):
             elif 'bias' in name:
                 torch.nn.init.constant_(wts, 0)
 
-    def forward(self, observation, barcode, h, c, enable_embedder_layers):
+    def forward(self, observation, barcode, h, c):
         # unpack activity
         h = h.view(h.size(1), -1)
         c = c.view(c.size(1), -1)
@@ -49,15 +49,15 @@ class DNDLSTM(nn.Module):
         # Form the inputs nicely
         observation = observation.view(1, self.exp_settings['num_arms'])
         context = barcode.view(1, self.exp_settings['barcode_size'])
-        print('Obs: ', observation)
-        print('CTX: ', context)
+        # print('Obs: ', observation)
+        # print('R-CTX:', context)
 
         if self.exp_settings['agent_input'] == 'obs/context':
             x_t = torch.cat((observation, context), dim = 1)
         else:  # self.exp_settings['agent_input'] == 'obs'
             x_t = observation
 
-        print(x_t)
+        # print(x_t)
 
         # transform the input info
         Wx = self.i2h(x_t)
@@ -75,18 +75,26 @@ class DNDLSTM(nn.Module):
         # new cell state = gated(prev_c) + gated(new_stuff)
         c_t = torch.mul(f_t, c) + torch.mul(i_t, c_t_new)
 
-        # Embedding model should be unfrozen if this is the first query of a trial
-
+        # Freeze all LSTM Layers before getting memory
+        layers = [self.i2h, self.h2h, self.a2c]
+        for layer in layers:
+            for param in layer.parameters():
+                param.requires_grad = False 
+    
         # Query Memory (hidden state passed into embedder, context used for embedder loss function)
-        mem, predicted_barcode = self.dnd.get_memory(h, context, enable_embedder_layers)
+        mem, predicted_barcode = self.dnd.get_memory(h, context)
         m_t = mem.tanh()
+
+        # Unfreeze LSTM
+        for layer in layers:
+            for param in layer.parameters():
+                param.requires_grad = True 
+
         # gate the memory; in general, can be any transformation of it
         c_t = c_t + torch.mul(r_t, m_t)
         # get gated hidden state from the cell state
         h_t = torch.mul(o_t, c_t.tanh())
 
-        # Embedding model should be frozen after save_memory if on last moment of trial
-        # self.turn_on_encoding() should have been activated in main function
         # Saving Memory (hidden state passed into embedder, embedding is key and c_t is val)
         self.dnd.save_memory(h_t, c_t)
 
