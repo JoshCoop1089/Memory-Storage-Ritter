@@ -56,7 +56,6 @@ class DNDLSTM(nn.Module):
             x_t = torch.cat((observation, context), dim = 1)
         else:  # self.exp_settings['agent_input'] == 'obs'
             x_t = observation
-
         # print(x_t)
 
         # transform the input info
@@ -157,9 +156,7 @@ class DNDLSTM(nn.Module):
         V = [self.dnd.vals[i] for i in range(n_mems)]
         return K, V
 
-    def get_all_mems_josh(self):
-        # Memory now storing lists of memories in every spot, so we only want the most updated version of each list
-        n_mems = len(self.dnd.keys)
-        K = [self.dnd.keys[i][0] for i in range(n_mems)]
-        V = [self.dnd.vals[i] for i in range(n_mems)]
-        return K, V
+    def get_all_mems_embedder(self):
+        mem_keys = self.dnd.keys
+        predicted_mapping_to_keys = self.dnd.key_context_map
+        return mem_keys, predicted_mapping_to_keys

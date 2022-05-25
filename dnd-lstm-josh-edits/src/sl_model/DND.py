@@ -46,6 +46,7 @@ class DND():
         self.dict_len = dict_len
         self.kernel = exp_settings['kernel']
         self.hidden_lstm_dim = hidden_lstm_dim
+        self.mapping = {}
 
         # dynamic state
         self.encoding_off = False
@@ -119,7 +120,12 @@ class DND():
         # mem_update_boolean = self.exp_settings['kaiser_key_update']
 
         keys = self.trial_buffer
-        trial_hidden_states = [keys[i] for i in range(len(keys)//4, len(keys), 2)]
+
+        # Since we're forcing only saves on valid barcodes, save full buffer per trial
+        trial_hidden_states = [keys[i] for i in range(len(keys)) if keys[i] != ()]
+        # print(trial_hidden_states)
+
+        # trial_hidden_states = [keys[i] for i in range(len(keys)//4, len(keys), 2)]
 
         """
         # # Trying different versions of Kaiser Update averaging
@@ -207,12 +213,17 @@ class DND():
         # else:
         """
 
-        # Trial buffer contained embedding,location from get_memory
-        for embedding, context_location in trial_hidden_states:
-            old_emb = self.keys[context_location]
-            self.keys[context_location] = [torch.squeeze(embedding.data)] + old_emb
-            self.vals[context_location] = torch.squeeze(memory_val.data)
-
+        try:
+            # test = trial_hidden_states[0][0]
+            # Trial buffer contained embedding,location from get_memory
+            for embedding, context_location in trial_hidden_states:
+                old_emb = self.keys[context_location]
+                self.keys[context_location] = [torch.squeeze(embedding.data)] + old_emb
+                self.vals[context_location] = torch.squeeze(memory_val.data)
+        except Exception as e:
+            print(e)
+            pass
+        
     def get_memory(self, query_key, context_label):
         """Perform a 1-NN search over dnd
 
@@ -234,7 +245,6 @@ class DND():
             param.requires_grad = True
 
         embedding, predicted_context = agent(query_key)
-        # print("Raw:", predicted_context)
         # print("Embedding:", embedding)
         
         # Update pass over the embedding model
@@ -244,36 +254,69 @@ class DND():
         self.embed_optimizer.zero_grad()
         loss.backward(retain_graph=True)
         self.embed_optimizer.step()
-       
-        # Predicted context will be tensor of floats, need to transform into binarystring for key mapping
-        predicted_context = torch.where(predicted_context > 0.5, 1, 0)  
-        # print('P-CTX:', predicted_context)
-        # barcode -> string starts out at '[[1 1 0]]', thus the reductions on the end
-        predicted_context = np.array2string(predicted_context.numpy())[2:-2].replace(" ", "")
-
-        # Task not yet seen, no stored LSTM yet
-        if predicted_context not in self.key_context_map:
-            self.key_context_map[predicted_context] = self.context_counter
-            context_location = self.context_counter
-            self.keys.append([])
-            self.vals.append(0)
-            self.context_counter += 1
-            best_memory_val = _empty_memory(self.hidden_lstm_dim)
-
-        # Task seen, get LSTM attached to task
-        else:
-            context_location = self.key_context_map[predicted_context]
-            best_memory_val = self.vals[context_location]
-            # First reference of a task, but before LSTM is saved to memory
-            if type(best_memory_val) == int:
-                best_memory_val = _empty_memory(self.hidden_lstm_dim)
-
-        # Store embedding and predicted class label in trial_buffer
-        self.trial_buffer.append((embedding, context_location))
 
         # Freeze Embedder model until next memory retrieval
         for param in agent.parameters():
             param.requires_grad = False
+       
+        #######################################
+        # THIS IS A SKETCH WAY OF ID'ING THE BARCODE
+        # PUT MORE THOUGHT INTO THIS
+        #######################################
+        
+        # print("Raw:", predicted_context)
+        # Embedder final layer is sigmoided, so below 0.5 is a 0, above is a 1
+        predicted_context = torch.where(predicted_context > 0.5, 1, 0)  
+        # print('P-CTX:', predicted_context)
+
+        # Predicted context will be tensor of floats, need to transform into binarystring for key mapping
+        # barcode -> string starts out at '[[1 1 0]]', thus the reductions on the end
+        predicted_context = np.array2string(predicted_context.numpy())[2:-2].replace(" ", "")
+        store = True
+
+        ####################################
+        # END OF THE SKETCH SHIT
+        # RESUME YOUR REGULARLY SCHEDULED VIEWING
+        ####################################
+
+
+        # Task not yet seen, no stored LSTM yet
+        if predicted_context not in self.key_context_map:
+
+            if not self.exp_settings['store_all']:
+                # Predicted Barcode isn't valid, skip the step
+                if predicted_context not in self.mapping:
+                    store = False
+                # Predicted Barcode is valid, prep memory for possible insertion at end of trial
+                # Insertion might not occur due to hidden state pruning? Need to think about how to guarantee all valid trials get stored
+                else:
+                    self.key_context_map[predicted_context] = self.context_counter
+                    context_location = self.context_counter
+                    self.keys.append([])
+                    self.vals.append(0)
+                    self.context_counter += 1
+            
+            # Store memkey for every predicted barcode
+            else:
+                self.key_context_map[predicted_context] = self.context_counter
+                context_location = self.context_counter
+                self.keys.append([])
+                self.vals.append(0)
+                self.context_counter += 1
+            best_memory_val = _empty_memory(self.hidden_lstm_dim)
+
+        # Task seen before, get LSTM attached to task
+        else:
+            context_location = self.key_context_map[predicted_context]
+            best_memory_val = self.vals[context_location]
+
+            # Task was ID'd in this trial already, but there hasn't been an LSTM stored for it yet
+            if type(best_memory_val) == int:
+                best_memory_val = _empty_memory(self.hidden_lstm_dim)
+
+        # Store embedding and predicted class label memory index in trial_buffer
+        if store:
+            self.trial_buffer.append((embedding, context_location))
 
         return best_memory_val, predicted_context
 

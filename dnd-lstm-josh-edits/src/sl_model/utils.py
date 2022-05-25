@@ -2,12 +2,8 @@ import torch
 import numpy as np
 from torch.nn.functional import smooth_l1_loss
 
-
 '''helpers'''
-
 eps = np.finfo(np.float32).eps.item()
-
-
 def compute_returns(rewards, gamma=0, normalize=False):
     """compute return in the standard policy gradient setting.
 
@@ -36,7 +32,6 @@ def compute_returns(rewards, gamma=0, normalize=False):
     if normalize:
         returns = (returns - returns.mean()) / (returns.std() + eps)
     return returns
-
 
 def get_reward(a_t, a_t_targ):
     """define the reward function at time t
@@ -73,17 +68,17 @@ def get_reward_from_assumed_barcode(a_t, reward_from_obs, assumed_barcode, mappi
         else:
             reward = torch.tensor([int(np.random.random() < 0.1)])
 
+        # Deterministic Arm Rewards (for debugging purposes)
+        # Make sure to change generate_one_episode in ContextBandits.py as well
+        # reward = torch.tensor([int(a_t == best_arm)])
+
     # Penalize a predicted barcode which isn't a part of the mapping for the epoch
     except Exception:
             reward = torch.tensor([-1])
 
     # print("P-R:", reward, "R-R:", reward_from_obs)
-        
-
     matched_reward = int(torch.equal(reward, reward_from_obs))
     return torch.tensor(matched_reward).type(torch.FloatTensor).data
-    
-
 
 def compute_a2c_loss(probs, values, returns):
     """compute the objective node for policy/value networks

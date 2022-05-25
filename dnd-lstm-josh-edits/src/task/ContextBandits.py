@@ -178,6 +178,10 @@ class ContextualBandit():
                 reward = int(np.random.random() < 0.9)
             else:
                 reward = int(np.random.random() < 0.1)
+        
+            # Deterministic Arm Rewards (for debugging purposes)
+            # Make sure to change get_reward_from_assumed_barcode in utils.py as well
+            # reward = int(arm==best_arm)
             trial_rewards[pull] = reward
 
         # After generation of reward, use noise to obscure input for first x pulls of trial
