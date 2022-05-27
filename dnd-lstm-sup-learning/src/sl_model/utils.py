@@ -55,7 +55,7 @@ def get_reward(a_t, a_t_targ):
         r_t = 0
     return torch.tensor(r_t).type(torch.FloatTensor).data
 
-def get_reward_from_assumed_barcode(a_t, reward_from_obs, assumed_barcode, mapping):
+def get_reward_from_assumed_barcode(a_t, reward_from_obs, assumed_barcode, mapping, perfect_info = False):
     """
     Uses the embedding models prediction of a barcode to pull a specific arm.
     The reward from that pull is checked against the reward from the observation.
@@ -63,14 +63,16 @@ def get_reward_from_assumed_barcode(a_t, reward_from_obs, assumed_barcode, mappi
     """
     try:
         best_arm = mapping[assumed_barcode]
-        if a_t == best_arm:
-            reward = torch.tensor([int(np.random.random() < 0.9)])
-        else:
-            reward = torch.tensor([int(np.random.random() < 0.1)])
+        if perfect_info == False:
+            if a_t == best_arm:
+                reward = torch.tensor([int(np.random.random() < 0.9)])
+            else:
+                reward = torch.tensor([int(np.random.random() < 0.1)])
 
         # Deterministic Arm Rewards (for debugging purposes)
         # Make sure to change generate_one_episode in ContextBandits.py as well
-        # reward = torch.tensor([int(a_t == best_arm)])
+        else:  # perfect_info == True
+            reward = torch.tensor([int(a_t == best_arm)])
 
     # Penalize a predicted barcode which isn't a part of the mapping for the epoch
     except Exception:

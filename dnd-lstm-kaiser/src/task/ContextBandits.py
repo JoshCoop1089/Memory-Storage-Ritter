@@ -45,20 +45,30 @@ import random
 
 class ContextualBandit():
 
-    def __init__(self, pulls_per_episode, episodes_per_epoch, noise_observations):
+    def __init__(self, 
+                    pulls_per_episode, episodes_per_epoch, 
+                    num_arms, num_barcodes, barcode_size,
+                    noise_observations,
+                    perfect_info = False):
 
         # Task Specific
         self.pulls_per_episode = pulls_per_episode
         self.episodes_per_epoch = episodes_per_epoch
         self.noise_observations = noise_observations
+
+        # Arm Specific
+        self.num_arms = num_arms
+        self.num_barcodes = num_barcodes
+        self.barcode_size = barcode_size
+        self.perfect_info = perfect_info
+
+        self.epoch_mapping = self.generate_barcode_mapping()
     
         # input validation
         # Noise not implemented yet in observations
         assert 0 <= noise_observations < pulls_per_episode
 
-    def sample(
-            self, num_arms, num_barcodes, barcode_size,
-            to_torch=True):
+    def sample(self, to_torch=True):
         """
         Get a single epochs worth of observations and rewards for a newly created barcode mapping
 
@@ -80,13 +90,8 @@ class ContextualBandit():
             shows which arm has the 90% reward chance per barcode
         """
 
-        # Arm Specific
-        self.num_arms = num_arms
-        self.num_barcodes = num_barcodes
-        self.barcode_size = barcode_size
 
-        epoch_mapping = self.generate_barcode_mapping()
-        observation_p1, reward_p1, barcode_p1 = self.generate_trials_info(epoch_mapping)
+        observation_p1, reward_p1, barcode_p1 = self.generate_trials_info(self.epoch_mapping)
 
         # Outputs stacked for LSTM
         observations = np.vstack([observation_p1])
@@ -98,7 +103,7 @@ class ContextualBandit():
             observations = to_pth(observations)
             barcodes = to_pth(barcodes)
             rewards = to_pth(rewards, pth_dtype=torch.LongTensor)
-        return observations, barcodes, rewards, epoch_mapping
+        return observations, barcodes, rewards
 
     def generate_barcode_mapping(self):
         barcode_bag = set()
@@ -174,14 +179,17 @@ class ContextualBandit():
 
         # Good arm has 90% chance of reward, all others have 10% chance
         for pull, arm in zip(pull_num, arm_chosen):
-            if arm == best_arm:
-                reward = int(np.random.random() < 0.9)
-            else:
-                reward = int(np.random.random() < 0.1)
+            if self.perfect_info == False:
+                if arm == best_arm:
+                    reward = int(np.random.random() < 0.9)
+                else:
+                    reward = int(np.random.random() < 0.1)
         
             # Deterministic Arm Rewards (for debugging purposes)
             # Make sure to change get_reward_from_assumed_barcode in utils.py as well
-            # reward = int(arm==best_arm)
+            else:  # self.perfect_info == False
+                reward = int(arm==best_arm)
+
             trial_rewards[pull] = reward
 
         # After generation of reward, use noise to obscure input for first x pulls of trial
@@ -200,20 +208,28 @@ def to_pth(np_array, pth_dtype=torch.FloatTensor):
 
 if __name__ == '__main__':
 
-    pulls = 4
-    episodes = 1
+    pulls = 2
+    episodes = 9
     noise = 0
-    num_arms = 3
-    num_barcodes = 4
-    barcode_size = 3
-    task = ContextualBandit(pulls, episodes, noise)
+    num_arms = 2
+    num_barcodes = 3
+    barcode_size = 2
+    perfect_info = False
+    task = ContextualBandit(pulls, episodes, num_arms, num_barcodes, barcode_size, noise, perfect_info)
 
-    obs, bar, reward, map = task.sample(num_arms, num_barcodes, barcode_size)
+    obs, bar, reward = task.sample()
     outp = np.dstack([obs, bar, reward])
     # print("Obs:", obs)
     # print("Bar:", bar)
     # print("Reward:", reward)
-    print("Mapping:", map)
+    print("Mapping:", task.epoch_mapping)
+    print("Concat:", outp)
+    obs, bar, reward = task.sample()
+    outp = np.dstack([obs, bar, reward])
+    # print("Obs:", obs)
+    # print("Bar:", bar)
+    # print("Reward:", reward)
+    print("Mapping:", task.epoch_mapping)
     print("Concat:", outp)
 
 """

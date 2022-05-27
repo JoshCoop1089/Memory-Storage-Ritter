@@ -52,11 +52,18 @@ class DNDLSTM(nn.Module):
         # print('Obs: ', observation)
         # print('R-CTX:', context)
 
+        # Into LSTM
         if self.exp_settings['agent_input'] == 'obs/context':
             x_t = torch.cat((observation, context), dim = 1)
         else:  # self.exp_settings['agent_input'] == 'obs'
             x_t = observation
         # print(x_t)
+
+        # Used for memory search/storage (non embedder versions)
+        if self.exp_settings['mem_store'] == 'context':
+            q_t = context
+        elif self.exp_settings['mem_store'] == 'obs/context':
+            q_t = torch.cat((observation, context), dim=1)
 
         # transform the input info
         Wx = self.i2h(x_t)
@@ -74,28 +81,38 @@ class DNDLSTM(nn.Module):
         # new cell state = gated(prev_c) + gated(new_stuff)
         c_t = torch.mul(f_t, c) + torch.mul(i_t, c_t_new)
 
-        # Freeze all LSTM Layers before getting memory
-        layers = [self.i2h, self.h2h, self.a2c]
-        for layer in layers:
-            for param in layer.parameters():
-                param.requires_grad = False 
+        if self.exp_settings['mem_store'] == 'embedding':
+            # Freeze all LSTM Layers before getting memory
+            layers = [self.i2h, self.h2h, self.a2c]
+            for layer in layers:
+                for name, param in layer.named_parameters():
+                    param.requires_grad = False 
+                # print(name, param.data)
     
-        # Query Memory (hidden state passed into embedder, context used for embedder loss function)
-        mem, predicted_barcode = self.dnd.get_memory(h, context)
-        m_t = mem.tanh()
+            # Query Memory (hidden state passed into embedder, context used for embedder loss function)
+            mem, predicted_barcode = self.dnd.get_memory(h, context)
+            m_t = mem.tanh()
 
-        # Unfreeze LSTM
-        for layer in layers:
-            for param in layer.parameters():
-                param.requires_grad = True 
+            # Unfreeze LSTM
+            for layer in layers:
+                for name, param in layer.named_parameters():
+                    param.requires_grad = True 
+                # print(name, param.data)
+        
+        else:
+            mem, predicted_barcode = self.dnd.get_memory_non_embedder(q_t)
+            m_t = mem.tanh()
 
         # gate the memory; in general, can be any transformation of it
         c_t = c_t + torch.mul(r_t, m_t)
         # get gated hidden state from the cell state
         h_t = torch.mul(o_t, c_t.tanh())
 
-        # Saving Memory (hidden state passed into embedder, embedding is key and c_t is val)
-        self.dnd.save_memory(h_t, c_t)
+        if self.exp_settings['mem_store'] == 'embedding':
+            # Saving Memory (hidden state passed into embedder, embedding is key and c_t is val)
+            self.dnd.save_memory(h_t, c_t)
+        else:
+            self.dnd.save_memory_non_embedder(q_t, c_t)
 
         # policy
         pi_a_t, v_t = self.a2c.forward(h_t)

@@ -52,11 +52,32 @@ class DND():
         self.encoding_off = False
         self.retrieval_off = False
 
-        # allocate space for per trial hidden state buffer
-        self.trial_buffer = [()]
+        # Non Embedder Memory Sizes
+        self.mem_store = exp_settings['mem_store']
+        if self.mem_store == 'obs/context':
+            self.mem_input_dim = exp_settings['num_arms'] + exp_settings['barcode_size']
+        elif self.mem_store == 'context':
+            self.mem_input_dim = exp_settings['barcode_size']
+
+        # These two won't work for barcode tasks without figuring out a way to get the barcode
+        # Cheat and get it from the input?
+        elif self.mem_store == 'obs':
+            self.mem_input_dim = exp_settings['num_arms']
+        elif self.mem_store == 'hidden':
+            self.mem_input_dim = exp_settings['dim_hidden_lstm']
 
         # Experimental changes
         self.exp_settings = exp_settings
+
+        # allocate space for per trial hidden state buffer
+        self.trial_buffer = [()]
+
+        if self.mem_store == 'embedding':
+            # Embedding model
+            self.embedder = Embedder(self.exp_settings)
+            learning_rate = 5e-4
+            self.embed_optimizer = torch.optim.Adam(
+                self.embedder.parameters(), lr=learning_rate)
 
         # allocate space for memories
         self.reset_memory()
@@ -66,16 +87,9 @@ class DND():
     def reset_memory(self):
         self.keys = [[]]
         self.vals = []
-        # self.keys = [[] for _ in range(self.exp_settings['num_barcodes'])]
-        # self.vals = [0 for _ in range(self.exp_settings['num_barcodes'])]
+        self.recall_sims = []     
         self.key_context_map = {}
-        self.context_counter = 0
-        self.recall_sims = []
-
-        # Embedding model (reset every epoch due to changing contexts)
-        self.embedder = Embedder(self.exp_settings)
-        learning_rate = 5e-4
-        self.embed_optimizer = torch.optim.Adam(self.embedder.parameters(), lr=learning_rate)
+        self.context_counter = 0 
         
     def check_config(self):
         assert self.dict_len > 0
@@ -214,7 +228,6 @@ class DND():
         """
 
         try:
-            # test = trial_hidden_states[0][0]
             # Trial buffer contained embedding,location from get_memory
             for embedding, context_location in trial_hidden_states:
                 old_emb = self.keys[context_location]
@@ -223,6 +236,38 @@ class DND():
         except Exception as e:
             print(e)
             pass
+
+    def save_memory_non_embedder(self, memory_key, memory_val):
+        # All input is stored in memory (QiHong Github version)
+        if self.exp_settings['mem_store'] == 'obs/context':
+            self.keys.append([torch.squeeze(memory_key.data)])
+            # Dumb error catching due to how i organize the data for our version
+            try:
+                test = self.keys[0][0]
+            except IndexError:
+                self.keys.pop(0)
+            self.vals.append(torch.squeeze(memory_val.data))
+            # remove the oldest memory, if overflow
+            if len(self.keys) > self.dict_len:
+                self.keys.pop(0)
+                self.vals.pop(0)
+            return
+
+        # Only context is stored in memory (Ritter Version)
+        # figure this out after testing the dict inputs
+        elif self.exp_settings['mem_store'] == 'context':
+            self.keys.append([torch.squeeze(memory_key.data)])
+            # Dumb error catching due to how i organize the data for our version
+            try:
+                test = self.keys[0][0]
+            except IndexError:
+                self.keys.pop(0)
+            self.vals.append(torch.squeeze(memory_val.data))
+            # remove the oldest memory, if overflow
+            if len(self.keys) > self.dict_len:
+                self.keys.pop(0)
+                self.vals.pop(0)
+            return
         
     def get_memory(self, query_key, context_label):
         """Perform a 1-NN search over dnd
@@ -266,12 +311,12 @@ class DND():
         
         # print("Raw:", predicted_context)
         # Embedder final layer is sigmoided, so below 0.5 is a 0, above is a 1
-        predicted_context = torch.where(predicted_context > 0.5, 1, 0)  
+        # predicted_context = torch.where(predicted_context > 0.5, 1, 0)  
         # print('P-CTX:', predicted_context)
 
         # Predicted context will be tensor of floats, need to transform into binarystring for key mapping
         # barcode -> string starts out at '[[1 1 0]]', thus the reductions on the end
-        predicted_context = np.array2string(predicted_context.numpy())[2:-2].replace(" ", "")
+        # predicted_context = np.array2string(predicted_context.numpy())[2:-2].replace(" ", "")
         store = True
 
         ####################################
@@ -279,30 +324,53 @@ class DND():
         # RESUME YOUR REGULARLY SCHEDULED VIEWING
         ####################################
 
+        """
+        # Better barcode ID Thoughts
+
+        Transform epoch_mapping.keys() into list of keys
+        do cosine similarity comparison between predicted_context and valid keys
+        choose highest sim as barcode?
+
+        would prevent storing of invalid barcodes, but how much accuracy will we get in the comparison?
+        """
+        # print("Raw:", predicted_context)
+
+        key_list = list(self.mapping.keys())
+        bar_ar = np.zeros((len(key_list), self.exp_settings['barcode_size']))
+        for num, barcode in enumerate(key_list):
+            for id, val in enumerate(barcode):
+                bar_ar[num][id] = int(val)
+        bar_tens = [torch.from_numpy(bar_ar[i]) for i in range(len(bar_ar))]
+        similarities = compute_similarities(predicted_context, bar_tens, self.kernel)
+        best_memory_id = int(torch.argmax(similarities))
+        predicted_context = key_list[best_memory_id]
+        # print('P-CTX:', predicted_context)
+        # print('R-CTX:', context_label)
+
 
         # Task not yet seen, no stored LSTM yet
         if predicted_context not in self.key_context_map:
 
-            if not self.exp_settings['store_all']:
-                # Predicted Barcode isn't valid, skip the step
-                if predicted_context not in self.mapping:
-                    store = False
-                # Predicted Barcode is valid, prep memory for possible insertion at end of trial
-                # Insertion might not occur due to hidden state pruning? Need to think about how to guarantee all valid trials get stored
-                else:
-                    self.key_context_map[predicted_context] = self.context_counter
-                    context_location = self.context_counter
-                    self.keys.append([])
-                    self.vals.append(0)
-                    self.context_counter += 1
+            # if not self.exp_settings['store_all']:
+            #     # Predicted Barcode isn't valid, skip the step
+            #     if predicted_context not in self.mapping:
+            #         store = False
+            #     # Predicted Barcode is valid, prep memory for possible insertion at end of trial
+            #     # Insertion might not occur due to hidden state pruning? Need to think about how to guarantee all valid trials get stored
+            #     else:
+            #         self.key_context_map[predicted_context] = self.context_counter
+            #         context_location = self.context_counter
+            #         self.keys.append([])
+            #         self.vals.append(0)
+            #         self.context_counter += 1
             
-            # Store memkey for every predicted barcode
-            else:
-                self.key_context_map[predicted_context] = self.context_counter
-                context_location = self.context_counter
-                self.keys.append([])
-                self.vals.append(0)
-                self.context_counter += 1
+            # # Store memkey for every predicted barcode
+            # else:
+            self.key_context_map[predicted_context] = self.context_counter
+            context_location = self.context_counter
+            self.keys.append([])
+            self.vals.append(0)
+            self.context_counter += 1
             best_memory_val = _empty_memory(self.hidden_lstm_dim)
 
         # Task seen before, get LSTM attached to task
@@ -315,10 +383,53 @@ class DND():
                 best_memory_val = _empty_memory(self.hidden_lstm_dim)
 
         # Store embedding and predicted class label memory index in trial_buffer
-        if store:
-            self.trial_buffer.append((embedding, context_location))
+        # if store:
+        self.trial_buffer.append((embedding, context_location))
 
         return best_memory_val, predicted_context
+
+    def get_memory_non_embedder(self, query_key):
+        """Perform a 1-NN search over dnd
+
+        Parameters
+        ----------
+        query_key : a row vector
+            a DND key, used to for memory search
+
+        Returns
+        -------
+        a row vector
+            a DND value, representing the memory content
+
+        """
+        try:
+            test = self.keys[0][0]
+            n_memories = len(self.keys)
+        except IndexError:
+            n_memories = 0
+
+        # if no memory, return the zero vector
+        if n_memories == 0 or self.retrieval_off:
+            return _empty_memory(self.hidden_lstm_dim), _empty_barcode(self.exp_settings['barcode_size'])
+
+        # compute similarity(query, memory_i ), for all i
+        key_list = [self.keys[x][0] for x in range(len(self.keys))]
+        similarities = compute_similarities(query_key, key_list, self.kernel)
+
+        # get the best-match memory
+        best_memory_val, best_memory_id = self._get_memory(similarities)
+
+        # get the barcode for that memory
+        key_stored = self.keys[best_memory_id][0]
+
+        # Split the stored item to get the barcode if needed
+        if self.exp_settings['mem_store'] == 'obs/context':
+            barcode = key_stored[self.exp_settings['barcode_size']:]
+        else:
+            barcode = key_stored
+
+        barcode = np.array2string(barcode.numpy())[1:-1].replace(" ", "").replace(".", "")
+        return best_memory_val, barcode
 
     def _get_memory(self, similarities, policy='1NN'):
         """get the episodic memory according to some policy
@@ -385,3 +496,8 @@ def _empty_memory(memory_dim):
     """Get a empty memory, assuming the memory is a row vector
     """
     return torch.zeros(1, memory_dim)
+
+def _empty_barcode(memory_dim):
+    """Get a empty barcode, assuming the memory is a row vector
+    """
+    return np.array2string((torch.zeros(memory_dim)-1).numpy())[1:-1].replace(" ", "").replace(".", "")
