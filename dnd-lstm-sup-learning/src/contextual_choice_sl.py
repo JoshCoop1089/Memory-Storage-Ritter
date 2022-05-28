@@ -179,6 +179,8 @@ def run_experiment_sl(exp_settings):
                 embedder_accuracy += int(real_bc == assumed_barcode)
                 # if real_bc == assumed_barcode:
                 #     print("context match!")
+                # print(f"R_t: {r_t} | Emb_Acc: {embedder_accuracy}")
+            # print("-- end of ep --")
 
             barcodes_seen_after = len(agent.dnd.key_context_map)
             # if barcodes_seen_after != barcodes_seen_prior:
@@ -194,15 +196,20 @@ def run_experiment_sl(exp_settings):
             log_Y[i] = np.squeeze(reward_from_obs.numpy())
 
             # Updating avg return per episode
+            # log_return[i][m] += cumulative_reward/pulls_per_episode
             log_return = update_avg_value(  log_return, i, m, cumulative_reward,
                                             episodes_per_epoch, pulls_per_episode)
            
             # Updating avg accuracy per episode
-            log_embedder_accuracy = update_avg_value(   log_embedder_accuracy, i, m, 
-                                                        embedder_accuracy, episodes_per_epoch, pulls_per_episode)
+            log_embedder_accuracy[i][m] += embedder_accuracy/pulls_per_episode
+            # log_embedder_accuracy = update_avg_value(   log_embedder_accuracy, i, m, 
+            #                                             embedder_accuracy, episodes_per_epoch, pulls_per_episode)
             
             log_loss_value[i] += loss_value.item() / episodes_per_epoch
             log_loss_policy[i] += loss_policy.item() / episodes_per_epoch
+
+            # print("Rets:\n\t", log_return)
+            # print("Acc:\n\t", log_embedder_accuracy)
 
 
         # # Memory retrievals above sim threshold
@@ -233,8 +240,11 @@ def run_experiment_sl(exp_settings):
 
     # Additional returns to graph out of this file
     keys, prediction_mapping = agent.get_all_mems_embedder()
+    embedder_loss = 0
+    if exp_settings['mem_store'] == 'embedding':
+        embedder_loss = [x.detach().numpy() for x in agent.dnd.embedder_loss]
 
-    return log_return, log_loss_value, log_embedder_accuracy, keys, prediction_mapping, epoch_mapping
+    return log_return, log_loss_value, log_embedder_accuracy, keys, prediction_mapping, epoch_mapping, embedder_loss
 
 
 def update_avg_value(current_list, epoch_num, episode_num, episode_sum, episodes_per_epoch, pulls_per_episode):
@@ -306,54 +316,54 @@ if __name__  == '__main__':
     # Experimental Parameters
     exp_settings = {}
     exp_settings['randomize'] = False
-    exp_settings['epochs'] = 5
+    exp_settings['epochs'] = 2
     exp_settings['kernel'] = 'cosine'      #cosine, l2
     exp_settings['noise_percent'] = 0.5
     exp_settings['agent_input'] = 'obs'    #obs, obs/context
     exp_settings['mem_store'] = 'obs/context'  #obs/context, context, embedding, obs, hidden (unsure how to do hidden return calc w/o barcode predictions)
     exp_settings['dim_hidden_lstm'] = 32
     exp_settings['embedding_size'] = 128
-    exp_settings['num_arms'] = 10
-    exp_settings['barcode_size'] = 10
+    exp_settings['num_arms'] = 5
+    exp_settings['barcode_size'] = 4
     exp_settings['num_barcodes'] = 10
-    exp_settings['pulls_per_episode'] = 10
+    exp_settings['pulls_per_episode'] = 5
     exp_settings['perfect_info'] = False
     exp_settings['reset_barcodes_per_epoch'] = True
 
 
     perfect_ret, random_ret = expected_return(
         exp_settings['num_arms'], exp_settings['perfect_info'])
-    f, axes = plt.subplots(1, 2, figsize=(8, 5))
+    f, axes = plt.subplots(1, 3, figsize=(12, 5))
 
-    # Obs or Obs/Context in memory version
-    log_return, log_loss_value, log_embedder_accuracy, keys, prediction_mapping, epoch_mapping = run_experiment_sl(exp_settings)
-    axes[0].plot(log_return, label=f'Obs/Context')
-    axes[1].plot(log_embedder_accuracy, label=f'Obs/Context')
+    # # Obs or Obs/Context in memory version
+    # log_return, log_loss_value, log_embedder_accuracy, keys, prediction_mapping, epoch_mapping, _ = run_experiment_sl(exp_settings)
+    # axes[0].plot(log_return, label=f'Obs/Context')
+    # axes[1].plot(log_embedder_accuracy, label=f'Obs/Context')
 
 
-    # Context in memory version
-    exp_settings['mem_store'] = 'context'
-    log_return, log_loss_value, log_embedder_accuracy, keys, prediction_mapping, epoch_mapping = run_experiment_sl(exp_settings)
-    axes[0].plot(log_return, label=f'Context')
-    axes[1].plot(log_embedder_accuracy, label=f'Context')
+    # # Context in memory version
+    # exp_settings['mem_store'] = 'context'
+    # log_return, log_loss_value, log_embedder_accuracy, keys, prediction_mapping, epoch_mapping, _ = run_experiment_sl(exp_settings)
+    # axes[0].plot(log_return, label=f'Context')
+    # axes[1].plot(log_embedder_accuracy, label=f'Context')
 
     # Embedding Version
     exp_settings['reset_barcodes_per_epoch'] = False
     exp_settings['mem_store'] = 'embedding'
     
-    # # # Only store valid barcode predictions from the embedder
-    # # exp_settings['store_all'] = False
-    # # log_return, log_loss_value, log_embedder_accuracy, keys, prediction_mapping, epoch_mapping = run_experiment_sl(exp_settings)
-    # # axes[0].plot(log_return, label = f'Valid Stored')
-    # # axes[1].plot(log_embedder_accuracy, label=f"Valid Stored")
+    # # # # Only store valid barcode predictions from the embedder
+    # # # exp_settings['store_all'] = False
+    # # # log_return, log_loss_value, log_embedder_accuracy, keys, prediction_mapping, epoch_mapping = run_experiment_sl(exp_settings)
+    # # # axes[0].plot(log_return, label = f'Valid Stored')
+    # # # axes[1].plot(log_embedder_accuracy, label=f"Valid Stored")
 
     # Store every predicted barcode from embedder
     exp_settings['store_all'] = True
-    log_return, log_loss_value, log_embedder_accuracy, keys, prediction_mapping, epoch_mapping = run_experiment_sl(exp_settings)
+    log_return, log_loss_value, log_embedder_accuracy, keys, prediction_mapping, epoch_mapping, embedder_loss = run_experiment_sl(exp_settings)
    
     # Memory Stored: {exp_settings['mem_store']} 
     # Graph Setup
-    graph_title = f"""
+    graph_title = f""" --- Memory Storage Type in Legend ---
     LSTM Hidden Dim: {exp_settings['dim_hidden_lstm']} | Embedding Dim: {exp_settings['embedding_size']} 
     Barcode Dim: {exp_settings['barcode_size']} | Unique Barcodes: {exp_settings['num_barcodes']}
     Arms: {exp_settings['num_arms']} | Pulls per Trial: {exp_settings['pulls_per_episode']} | Perfect Arms: {exp_settings['perfect_info']}"""
@@ -362,7 +372,8 @@ if __name__  == '__main__':
     # print("R-Bars to Arm: ", epoch_mapping)
    
     axes[0].plot(log_return, label = f'Embeddings')
-    axes[1].plot(log_embedder_accuracy, label=f"Embeddings")
+    axes[1].scatter(range(len(log_embedder_accuracy)), log_embedder_accuracy, label=f"Embeddings")
+    axes[2].plot(embedder_loss)
 
     # Returns
     # axes[0].axhline(y=perfect_ret, color='r', linestyle='dashed', label = 'Perfect Pulls')
@@ -377,6 +388,9 @@ if __name__  == '__main__':
     axes[1].set_xlabel('Episode')
     axes[1].legend(bbox_to_anchor=(0, -0.2, 1, 0), loc="upper left",
                mode="expand", borderaxespad=0, ncol=2)
+
+    axes[2].set_ylabel('Embedder Loss')
+    axes[2].set_xlabel('Pull')
     sns.despine()
     f.tight_layout()
     f.subplots_adjust(top=0.8)
@@ -386,15 +400,17 @@ if __name__  == '__main__':
         # T-SNE Mapping Attempts (from https://learnopencv.com/t-sne-for-feature-visualization/)
         labels = []
         for mem_id, barcode_keys in enumerate(keys):
+            # print(prediction_mapping)
             num_keys = len(barcode_keys)
+            # print(mem_id, num_keys)
             if num_keys > 0:
                 barcode = get_barcode(mem_id, prediction_mapping)
                 valid = False
                 if barcode in epoch_mapping.keys():
                     valid = True
                 labels.append((barcode, num_keys, valid))
-        # print(epoch_mapping.keys())
-        # print(labels, sum(labels[i][1] for i in range(len(labels))))
+        print("Epoch Mapping:", epoch_mapping.keys())
+        print("Key Info:", labels, sum(labels[i][1] for i in range(len(labels))))
         
         flattened_keys = list(itertools.chain.from_iterable(keys))
         # print(len(flattened_keys))

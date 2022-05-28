@@ -83,22 +83,29 @@ class DNDLSTM(nn.Module):
 
         if self.exp_settings['mem_store'] == 'embedding':
             # Freeze all LSTM Layers before getting memory
-            layers = [self.i2h, self.h2h, self.a2c]
-            for layer in layers:
+            layers_before = [self.i2h, self.h2h, self.a2c]
+            for layer in layers_before:
                 for name, param in layer.named_parameters():
                     param.requires_grad = False 
                 # print(name, param.data)
+
+            prior_vals = layers_before
     
             # Query Memory (hidden state passed into embedder, context used for embedder loss function)
             mem, predicted_barcode = self.dnd.get_memory(h, context)
             m_t = mem.tanh()
 
+            layers_after = [self.i2h, self.h2h, self.a2c]
             # Unfreeze LSTM
-            for layer in layers:
+            for layer in layers_after:
                 for name, param in layer.named_parameters():
                     param.requires_grad = True 
                 # print(name, param.data)
-        
+
+            # print(self.dnd.encoding_off)
+            # if self.dnd.encoding_off == False:
+            #     self.difference_of_weights(prior_vals)
+
         else:
             mem, predicted_barcode = self.dnd.get_memory_non_embedder(q_t)
             m_t = mem.tanh()
@@ -177,3 +184,11 @@ class DNDLSTM(nn.Module):
         mem_keys = self.dnd.keys
         predicted_mapping_to_keys = self.dnd.key_context_map
         return mem_keys, predicted_mapping_to_keys
+
+
+    def difference_of_weights(self, prior_vals):
+        layers = [self.i2h, self.h2h, self.a2c]
+        for layer_after, layer_before in zip(layers, prior_vals):
+            for (name, param_after), (name, param_before) in zip(layer_after.named_parameters(), layer_before.named_parameters()):
+                diff = torch.sub(param_after, param_before)
+                print(name, diff)

@@ -1,4 +1,5 @@
 # from hashlib import new
+from operator import index
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -78,6 +79,7 @@ class DND():
             learning_rate = 5e-4
             self.embed_optimizer = torch.optim.Adam(
                 self.embedder.parameters(), lr=learning_rate)
+            self.embedder_loss = []
 
         # allocate space for memories
         self.reset_memory()
@@ -289,13 +291,56 @@ class DND():
         for param in agent.parameters():
             param.requires_grad = True
 
-        embedding, predicted_context = agent(query_key)
-        # print("Embedding:", embedding)
-        
-        # Update pass over the embedding model
+        # Model outputs class probabilities
+        embedding, model_output = agent(query_key)
+        model_output = model_output.view(self.exp_settings['num_barcodes'])
+        # print("*** Getting New Memory ***")
+        # print("Raw:", model_output)
+        # print("Embedding:", embedding)     
+
+        # treat model as predicting a single id for a class label, based on the order in epoch_mapping
+
+
+        # """
+        # # Better barcode ID Thoughts
+
+        # Transform epoch_mapping.keys() into list of keys
+        # do cosine similarity comparison between predicted_context and valid keys
+        # choose highest sim as barcode?
+
+        # would prevent storing of invalid barcodes, but how much accuracy will we get in the comparison?
+        # """
+        # embedding, predicted_context = agent(query_key)
+        # # print("*** Getting New Memory ***")
+        # # print("Raw:", predicted_context)
+
+        # # Compare raw model output to known barcodes with fancy tensor broadcast magic bullshit
+        # key_list = list(self.mapping.keys())
+        # bar_ar = np.zeros((len(key_list), self.exp_settings['barcode_size']))
+        # for num, barcode in enumerate(key_list):
+        #     for id, val in enumerate(barcode):
+        #         bar_ar[num][id] = int(val)
+        # bar_tens = [torch.from_numpy(bar_ar[i]) for i in range(len(bar_ar))]
+        # # print(bar_tens)
+        # similarities = compute_similarities(predicted_context, bar_tens, self.kernel)
+        # # print(key_list)
+        # # print(similarities)
+
+        # # Normalize the similarities
+        # normed_sim = torch.multiply(similarities, 1./sum(similarities))
+        # # print(normed_sim)
+
+        # Get class ID number for real barcode
+        key_list = list(self.mapping.keys())
+        real_label_as_string = np.array2string(context_label.numpy())[
+            2:-2].replace(" ", "").replace(".", "")
+        real_label_id = torch.tensor(key_list.index(real_label_as_string), dtype = torch.long)
+
+        # Update pass over the embedding model with barcode IDs
         criterion = nn.CrossEntropyLoss()
-        loss = criterion(predicted_context, context_label)
-        # print("Loss: ", loss)
+        loss = criterion(model_output, real_label_id)
+        # print("Loss(Right?): ", loss)
+        self.embedder_loss.append(loss)
         self.embed_optimizer.zero_grad()
         loss.backward(retain_graph=True)
         self.embed_optimizer.step()
@@ -303,69 +348,17 @@ class DND():
         # Freeze Embedder model until next memory retrieval
         for param in agent.parameters():
             param.requires_grad = False
-       
-        #######################################
-        # THIS IS A SKETCH WAY OF ID'ING THE BARCODE
-        # PUT MORE THOUGHT INTO THIS
-        #######################################
-        
-        # print("Raw:", predicted_context)
-        # Embedder final layer is sigmoided, so below 0.5 is a 0, above is a 1
-        # predicted_context = torch.where(predicted_context > 0.5, 1, 0)  
+
+        # print("*** Got New Memory ***")
+        # Output barcode as string for downstream use
+        # Get class ID number for predicted barcode
+        best_memory_id = torch.argmax(model_output)
+        predicted_context = key_list[int(best_memory_id)]
         # print('P-CTX:', predicted_context)
-
-        # Predicted context will be tensor of floats, need to transform into binarystring for key mapping
-        # barcode -> string starts out at '[[1 1 0]]', thus the reductions on the end
-        # predicted_context = np.array2string(predicted_context.numpy())[2:-2].replace(" ", "")
-        store = True
-
-        ####################################
-        # END OF THE SKETCH SHIT
-        # RESUME YOUR REGULARLY SCHEDULED VIEWING
-        ####################################
-
-        """
-        # Better barcode ID Thoughts
-
-        Transform epoch_mapping.keys() into list of keys
-        do cosine similarity comparison between predicted_context and valid keys
-        choose highest sim as barcode?
-
-        would prevent storing of invalid barcodes, but how much accuracy will we get in the comparison?
-        """
-        # print("Raw:", predicted_context)
-
-        key_list = list(self.mapping.keys())
-        bar_ar = np.zeros((len(key_list), self.exp_settings['barcode_size']))
-        for num, barcode in enumerate(key_list):
-            for id, val in enumerate(barcode):
-                bar_ar[num][id] = int(val)
-        bar_tens = [torch.from_numpy(bar_ar[i]) for i in range(len(bar_ar))]
-        similarities = compute_similarities(predicted_context, bar_tens, self.kernel)
-        best_memory_id = int(torch.argmax(similarities))
-        predicted_context = key_list[best_memory_id]
-        # print('P-CTX:', predicted_context)
-        # print('R-CTX:', context_label)
-
+        # print('R-CTX:', real_label_as_string)
 
         # Task not yet seen, no stored LSTM yet
         if predicted_context not in self.key_context_map:
-
-            # if not self.exp_settings['store_all']:
-            #     # Predicted Barcode isn't valid, skip the step
-            #     if predicted_context not in self.mapping:
-            #         store = False
-            #     # Predicted Barcode is valid, prep memory for possible insertion at end of trial
-            #     # Insertion might not occur due to hidden state pruning? Need to think about how to guarantee all valid trials get stored
-            #     else:
-            #         self.key_context_map[predicted_context] = self.context_counter
-            #         context_location = self.context_counter
-            #         self.keys.append([])
-            #         self.vals.append(0)
-            #         self.context_counter += 1
-            
-            # # Store memkey for every predicted barcode
-            # else:
             self.key_context_map[predicted_context] = self.context_counter
             context_location = self.context_counter
             self.keys.append([])
@@ -383,7 +376,6 @@ class DND():
                 best_memory_val = _empty_memory(self.hidden_lstm_dim)
 
         # Store embedding and predicted class label memory index in trial_buffer
-        # if store:
         self.trial_buffer.append((embedding, context_location))
 
         return best_memory_val, predicted_context

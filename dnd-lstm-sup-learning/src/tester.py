@@ -44,4 +44,14 @@ for i in range(2):
         avg = update_avg_value(avg, i, m, val, eps, pulls)
 print(avg)
 
-.4, .8, .2, .6
+# def difference_of_weights(self, prior_vals):
+#     layers = [self.i2h, self.h2h, self.a2c]
+#     for layer_after, layer_before in zip(layers, prior_vals):
+#         for (name, param_after), (name, param_before) in zip(layer_after.named_parameters(), layer_before.named_parameters()):
+#             diff = torch.sub(param_after, param_before)
+#             print(name, diff)
+
+
+a = [0.6808, 0.7325]
+b = [x/sum(a) for x in a]
+print(b)
