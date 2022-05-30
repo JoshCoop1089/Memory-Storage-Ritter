@@ -91,7 +91,7 @@ for i in range(n_epochs):
         loss_policy, loss_value = compute_a2c_loss(probs, values, returns)
         loss = loss_policy + loss_value
         optimizer.zero_grad()
-        loss.backward()
+        loss.backward(retain_graph=True)
         optimizer.step()
 
         # log

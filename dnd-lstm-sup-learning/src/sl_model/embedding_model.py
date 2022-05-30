@@ -26,12 +26,12 @@ class Embedder(nn.Module):
 
     # Model should return an embedding and a context
     def forward(self, h):
-        x = torch.sigmoid(self.h2m(h))
-        # x = torch.sigmoid(self.mdrope(x))
-        # x = torch.sigmoid(self.m2e(x))
+        x = F.leaky_relu(self.h2m(h))
+        # x = self.mdrope(x)
+        x = F.leaky_relu(self.m2e(x))
         embedding = x
-        # x = torch.sigmoid(self.edropc(x))
-        predicted_context = torch.sigmoid(self.e2c(x))
+        # x = self.edropc(x)
+        predicted_context = F.leaky_relu(self.e2c(x))
         return embedding, predicted_context
 
     def reset_parameter(self):

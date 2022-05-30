@@ -179,7 +179,8 @@ def run_experiment_sl(exp_settings):
                 embedder_accuracy += int(real_bc == assumed_barcode)
                 # if real_bc == assumed_barcode:
                 #     print("context match!")
-                # print(f"R_t: {r_t} | Emb_Acc: {embedder_accuracy}")
+                # if t == pulls_per_episode - 1:
+                #     print(f"R_t: {cumulative_reward} | Emb_Acc: {embedder_accuracy}")
             # print("-- end of ep --")
 
             barcodes_seen_after = len(agent.dnd.key_context_map)
@@ -196,14 +197,14 @@ def run_experiment_sl(exp_settings):
             log_Y[i] = np.squeeze(reward_from_obs.numpy())
 
             # Updating avg return per episode
-            # log_return[i][m] += cumulative_reward/pulls_per_episode
-            log_return = update_avg_value(  log_return, i, m, cumulative_reward,
-                                            episodes_per_epoch, pulls_per_episode)
+            log_return[i][m] += cumulative_reward/pulls_per_episode
+            # log_return = update_avg_value(  log_return, i, m, cumulative_reward,
+                                            # episodes_per_epoch, pulls_per_episode)
            
             # Updating avg accuracy per episode
             log_embedder_accuracy[i][m] += embedder_accuracy/pulls_per_episode
             # log_embedder_accuracy = update_avg_value(   log_embedder_accuracy, i, m, 
-            #                                             embedder_accuracy, episodes_per_epoch, pulls_per_episode)
+                                                        # embedder_accuracy, episodes_per_epoch, pulls_per_episode)
             
             log_loss_value[i] += loss_value.item() / episodes_per_epoch
             log_loss_policy[i] += loss_policy.item() / episodes_per_epoch
@@ -211,27 +212,13 @@ def run_experiment_sl(exp_settings):
             # print("Rets:\n\t", log_return)
             # print("Acc:\n\t", log_embedder_accuracy)
 
-
-        # # Memory retrievals above sim threshold
-        # good_pull = np.array(agent.dnd.recall_sims) >= sim_threshhold
-        # # print(len(agent.dnd.recall_sims), (n_trials-1) * trial_length)
-        # valid_pulls[i] = sum(good_pull)/ ((n_trials-1) * trial_length)
-
-        # # Avg Similarity between queries and memory
-        # log_sims[i] += np.mean(agent.dnd.recall_sims)
-
         # print out some stuff
         time_end = time.time()
         run_time[i] = time_end - time_start
         print(
             'Epoch %3d | avg_return = %.2f | loss: val = %.2f, pol = %.2f | time = %.2f | emb_accuracy = %.2f'%
-            (i, log_return[i][-1], log_loss_value[i], log_loss_policy[i], run_time[i], log_embedder_accuracy[i][-1])
+            (i, np.mean(log_return[i]), log_loss_value[i], log_loss_policy[i], run_time[i], np.mean(log_embedder_accuracy[i]))
         )
-
-    final_emb_acc = [log_embedder_accuracy[i][-1] for i in range(len(log_embedder_accuracy))]
-    # avg_time = np.mean(run_time)
-    # avg_sim = np.mean(log_sims)
-    # print(f"-*-*- \n\tAvg Time: {avg_time:.2f}\n-*-*-")
 
     # Flatten Returns and Accuracy for Graphing
     log_return = list(itertools.chain.from_iterable(log_return))
@@ -316,17 +303,17 @@ if __name__  == '__main__':
     # Experimental Parameters
     exp_settings = {}
     exp_settings['randomize'] = False
-    exp_settings['epochs'] = 2
+    exp_settings['epochs'] = 5
     exp_settings['kernel'] = 'cosine'      #cosine, l2
     exp_settings['noise_percent'] = 0.5
     exp_settings['agent_input'] = 'obs'    #obs, obs/context
     exp_settings['mem_store'] = 'obs/context'  #obs/context, context, embedding, obs, hidden (unsure how to do hidden return calc w/o barcode predictions)
     exp_settings['dim_hidden_lstm'] = 32
-    exp_settings['embedding_size'] = 128
-    exp_settings['num_arms'] = 5
-    exp_settings['barcode_size'] = 4
+    exp_settings['embedding_size'] = 64
+    exp_settings['num_arms'] = 10
+    exp_settings['barcode_size'] = 5
     exp_settings['num_barcodes'] = 10
-    exp_settings['pulls_per_episode'] = 5
+    exp_settings['pulls_per_episode'] = 20
     exp_settings['perfect_info'] = False
     exp_settings['reset_barcodes_per_epoch'] = True
 
@@ -339,6 +326,8 @@ if __name__  == '__main__':
     # log_return, log_loss_value, log_embedder_accuracy, keys, prediction_mapping, epoch_mapping, _ = run_experiment_sl(exp_settings)
     # axes[0].plot(log_return, label=f'Obs/Context')
     # axes[1].plot(log_embedder_accuracy, label=f'Obs/Context')
+    # axes[2].plot(log_loss_value, label=f'Obs/Context')
+
 
 
     # # Context in memory version
@@ -346,6 +335,7 @@ if __name__  == '__main__':
     # log_return, log_loss_value, log_embedder_accuracy, keys, prediction_mapping, epoch_mapping, _ = run_experiment_sl(exp_settings)
     # axes[0].plot(log_return, label=f'Context')
     # axes[1].plot(log_embedder_accuracy, label=f'Context')
+    # axes[2].plot(log_loss_value, label=f'Context')
 
     # Embedding Version
     exp_settings['reset_barcodes_per_epoch'] = False
@@ -372,7 +362,7 @@ if __name__  == '__main__':
     # print("R-Bars to Arm: ", epoch_mapping)
    
     axes[0].plot(log_return, label = f'Embeddings')
-    axes[1].scatter(range(len(log_embedder_accuracy)), log_embedder_accuracy, label=f"Embeddings")
+    axes[1].plot(log_embedder_accuracy, label=f"Embeddings")
     axes[2].plot(embedder_loss)
 
     # Returns
@@ -409,22 +399,22 @@ if __name__  == '__main__':
                 if barcode in epoch_mapping.keys():
                     valid = True
                 labels.append((barcode, num_keys, valid))
-        print("Epoch Mapping:", epoch_mapping.keys())
+        # print("Epoch Mapping:", epoch_mapping.keys())
         print("Key Info:", labels, sum(labels[i][1] for i in range(len(labels))))
         
-        flattened_keys = list(itertools.chain.from_iterable(keys))
-        # print(len(flattened_keys))
+    #     flattened_keys = list(itertools.chain.from_iterable(keys))
+    #     # print(len(flattened_keys))
         
-        f3, axes3 = plt.subplots(1, 1, figsize=(8, 5))
-        f3, axes3 = plot_tsne_distribution(flattened_keys, labels, f3, axes3)
-        axes3.xaxis.set_visible(False)
-        axes3.yaxis.set_visible(False)
-        axes3.set_title("t-SNE on Keys" + 
-            "\nX is a real barcode, O is a false predicted barcode" +
-            "\nDoesn't indicate if prediction was correct for specific observation" +
-            "\nOnly if it was within the set of possibly correct barcodes")
-        # axes3.legend(bbox_to_anchor=(0, -0.1, 1, 0), loc="upper left",
-        #            mode="expand", borderaxespad=0, ncol=2)
-        f3.tight_layout()
+    #     f3, axes3 = plt.subplots(1, 1, figsize=(8, 5))
+    #     f3, axes3 = plot_tsne_distribution(flattened_keys, labels, f3, axes3)
+    #     axes3.xaxis.set_visible(False)
+    #     axes3.yaxis.set_visible(False)
+    #     axes3.set_title("t-SNE on Keys" + 
+    #         "\nX is a real barcode, O is a false predicted barcode" +
+    #         "\nDoesn't indicate if prediction was correct for specific observation" +
+    #         "\nOnly if it was within the set of possibly correct barcodes")
+    #     # axes3.legend(bbox_to_anchor=(0, -0.1, 1, 0), loc="upper left",
+    #     #            mode="expand", borderaxespad=0, ncol=2)
+    #     f3.tight_layout()
 
     plt.show()

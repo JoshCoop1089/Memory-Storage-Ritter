@@ -213,22 +213,22 @@ def to_pth(np_array, pth_dtype=torch.FloatTensor):
 
 if __name__ == '__main__':
 
-    pulls = 2
-    episodes = 9
+    pulls = 1
+    episodes = 1
     noise = 0
     num_arms = 2
-    num_barcodes = 3
-    barcode_size = 2
-    perfect_info = False
+    num_barcodes = 2
+    barcode_size = 1
+    perfect_info = True
     reset_barcode_mapping = True
     task = ContextualBandit(pulls, episodes, num_arms, num_barcodes, 
                             barcode_size, reset_barcode_mapping, noise, perfect_info)
 
     obs, bar, reward, map = task.sample()
     outp = np.dstack([obs, bar, reward])
-    # print("Obs:", obs)
-    # print("Bar:", bar)
-    # print("Reward:", reward)
+    print("Obs:", obs)
+    print("Bar:", bar)
+    print("Reward:", reward)
     print("Mapping:", task.epoch_mapping)
     print("Concat:", outp)
     obs, bar, reward, map = task.sample()

@@ -76,8 +76,8 @@ class DND():
         if self.mem_store == 'embedding':
             # Embedding model
             self.embedder = Embedder(self.exp_settings)
-            learning_rate = 5e-4
-            self.embed_optimizer = torch.optim.Adam(
+            learning_rate = 1e-4
+            self.embed_optimizer = torch.optim.SGD(
                 self.embedder.parameters(), lr=learning_rate)
             self.embedder_loss = []
 
@@ -293,53 +293,22 @@ class DND():
 
         # Model outputs class probabilities
         embedding, model_output = agent(query_key)
-        model_output = model_output.view(self.exp_settings['num_barcodes'])
+        # model_output = model_output.view(self.exp_settings['num_barcodes'])
         # print("*** Getting New Memory ***")
         # print("Raw:", model_output)
         # print("Embedding:", embedding)     
 
         # treat model as predicting a single id for a class label, based on the order in epoch_mapping
-
-
-        # """
-        # # Better barcode ID Thoughts
-
-        # Transform epoch_mapping.keys() into list of keys
-        # do cosine similarity comparison between predicted_context and valid keys
-        # choose highest sim as barcode?
-
-        # would prevent storing of invalid barcodes, but how much accuracy will we get in the comparison?
-        # """
-        # embedding, predicted_context = agent(query_key)
-        # # print("*** Getting New Memory ***")
-        # # print("Raw:", predicted_context)
-
-        # # Compare raw model output to known barcodes with fancy tensor broadcast magic bullshit
-        # key_list = list(self.mapping.keys())
-        # bar_ar = np.zeros((len(key_list), self.exp_settings['barcode_size']))
-        # for num, barcode in enumerate(key_list):
-        #     for id, val in enumerate(barcode):
-        #         bar_ar[num][id] = int(val)
-        # bar_tens = [torch.from_numpy(bar_ar[i]) for i in range(len(bar_ar))]
-        # # print(bar_tens)
-        # similarities = compute_similarities(predicted_context, bar_tens, self.kernel)
-        # # print(key_list)
-        # # print(similarities)
-
-        # # Normalize the similarities
-        # normed_sim = torch.multiply(similarities, 1./sum(similarities))
-        # # print(normed_sim)
-
         # Get class ID number for real barcode
-        key_list = list(self.mapping.keys())
+        key_list = sorted(list(self.mapping.keys()))
         real_label_as_string = np.array2string(context_label.numpy())[
             2:-2].replace(" ", "").replace(".", "")
-        real_label_id = torch.tensor(key_list.index(real_label_as_string), dtype = torch.long)
+        real_label_id = torch.tensor([key_list.index(real_label_as_string)], dtype = torch.long)
 
         # Update pass over the embedding model with barcode IDs
         criterion = nn.CrossEntropyLoss()
         loss = criterion(model_output, real_label_id)
-        # print("Loss(Right?): ", loss)
+        # print("Loss: ", loss)
         self.embedder_loss.append(loss)
         self.embed_optimizer.zero_grad()
         loss.backward(retain_graph=True)
@@ -347,12 +316,14 @@ class DND():
 
         # Freeze Embedder model until next memory retrieval
         for param in agent.parameters():
+            # print(param)
+            # print(param.grad)
             param.requires_grad = False
 
         # print("*** Got New Memory ***")
         # Output barcode as string for downstream use
         # Get class ID number for predicted barcode
-        best_memory_id = torch.argmax(model_output)
+        best_memory_id = torch.argmax(torch.softmax(model_output, dim = 1))
         predicted_context = key_list[int(best_memory_id)]
         # print('P-CTX:', predicted_context)
         # print('R-CTX:', real_label_as_string)

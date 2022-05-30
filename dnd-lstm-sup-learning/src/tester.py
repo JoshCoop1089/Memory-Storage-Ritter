@@ -55,3 +55,8 @@ print(avg)
 a = [0.6808, 0.7325]
 b = [x/sum(a) for x in a]
 print(b)
+
+for _ in range(20):
+    val = np.random.random()
+    reward = int(val < 0.9)
+    print(val, reward)
