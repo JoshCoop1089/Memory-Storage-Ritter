@@ -49,9 +49,10 @@ class ContextualBandit():
                     pulls_per_episode, episodes_per_epoch, 
                     num_arms, num_barcodes, barcode_size,
                     reset_barcode_mapping, noise_observations,
-                    perfect_info = False):
+                    device = 'cpu', perfect_info = False):
 
         # Task Specific
+        self.device = device
         self.pulls_per_episode = pulls_per_episode
         self.episodes_per_epoch = episodes_per_epoch
         self.reset_barcode_mapping = reset_barcode_mapping
@@ -105,9 +106,9 @@ class ContextualBandit():
 
         # to pytorch form
         if to_torch:
-            observations = to_pth(observations)
-            barcodes = to_pth(barcodes)
-            rewards = to_pth(rewards, pth_dtype=torch.LongTensor)
+            observations = to_pth(observations).to(self.device)
+            barcodes = to_pth(barcodes).to(self.device)
+            rewards = to_pth(rewards, pth_dtype=torch.LongTensor).to(self.device)
         return observations, barcodes, rewards, self.epoch_mapping
 
     def generate_barcode_mapping(self):

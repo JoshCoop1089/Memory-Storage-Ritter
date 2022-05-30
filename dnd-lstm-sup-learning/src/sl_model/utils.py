@@ -4,7 +4,7 @@ from torch.nn.functional import smooth_l1_loss
 
 '''helpers'''
 eps = np.finfo(np.float32).eps.item()
-def compute_returns(rewards, gamma=0, normalize=False):
+def compute_returns(rewards, device, gamma=0, normalize=False):
     """compute return in the standard policy gradient setting.
 
     Parameters
@@ -28,7 +28,7 @@ def compute_returns(rewards, gamma=0, normalize=False):
     for r in rewards[::-1]:
         R = r + gamma * R
         returns.insert(0, R)
-    returns = torch.tensor(returns)
+    returns = torch.tensor(returns).to(device)
     if normalize:
         returns = (returns - returns.mean()) / (returns.std() + eps)
     return returns
@@ -62,9 +62,11 @@ def get_reward_from_assumed_barcode(a_t, reward_from_obs, assumed_barcode, mappi
     Actual LSTM reward is if those two rewards match each other.
     """
     try:
+        # print(a_t, assumed_barcode)
         best_arm = mapping[assumed_barcode]
+        # print(a_t.item(), best_arm)
         if perfect_info == False:
-            if a_t == best_arm:
+            if a_t.item() == best_arm:
                 reward = int(np.random.random() < 0.9)
             else:
                 reward = int(np.random.random() < 0.1)
@@ -72,13 +74,14 @@ def get_reward_from_assumed_barcode(a_t, reward_from_obs, assumed_barcode, mappi
         # Deterministic Arm Rewards (for debugging purposes)
         # Make sure to change generate_one_episode in ContextBandits.py as well
         else:  # perfect_info == True
-            reward = int(a_t == best_arm)
+            reward = int(a_t.item() == best_arm)
 
     # Penalize a predicted barcode which isn't a part of the mapping for the epoch
     except Exception:
+        # print('how if more than once per episode')
         reward = 0
 
-    reward = reward * reward_from_obs.item()
+    # reward = reward * reward_from_obs.item()
     # print(reward)
 
     # print("P-R:", reward, "R-R:", reward_from_obs)

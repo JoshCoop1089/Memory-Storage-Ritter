@@ -42,12 +42,13 @@ class DND():
     """
 
     def __init__(self, dict_len, hidden_lstm_dim,
-                exp_settings):
+                exp_settings, device):
         # params
         self.dict_len = dict_len
         self.kernel = exp_settings['kernel']
         self.hidden_lstm_dim = hidden_lstm_dim
         self.mapping = {}
+        self.device = device
 
         # dynamic state
         self.encoding_off = False
@@ -75,10 +76,9 @@ class DND():
 
         if self.mem_store == 'embedding':
             # Embedding model
-            self.embedder = Embedder(self.exp_settings)
-            learning_rate = 1e-4
-            self.embed_optimizer = torch.optim.SGD(
-                self.embedder.parameters(), lr=learning_rate)
+            self.embedder = Embedder(self.exp_settings).to(self.device)
+            learning_rate = 5e-5
+            self.embed_optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, self.embedder.parameters()), lr=learning_rate)
             self.embedder_loss = []
 
         # allocate space for memories
@@ -284,26 +284,29 @@ class DND():
         a row vector
             a DND value, representing the memory content
         """
+        # Get class ID number for real barcode
+        key_list = sorted(list(self.mapping.keys()))
+        real_label_as_string = np.array2string(context_label.cpu().numpy())[
+            2:-2].replace(" ", "").replace(".", "")
+        real_label_id = torch.tensor([key_list.index(real_label_as_string)], dtype = torch.long).to(self.device)
+        # print(self.mapping)
+        # print(key_list, real_label_as_string, real_label_id)
+
         # Embedding Model Testing Ground
         agent = self.embedder
 
         # Unfreeze Embedder to train
-        for param in agent.parameters():
+        for name, param in agent.named_parameters():
+            # print(name, param.grad)
             param.requires_grad = True
 
         # Model outputs class probabilities
         embedding, model_output = agent(query_key)
-        # model_output = model_output.view(self.exp_settings['num_barcodes'])
         # print("*** Getting New Memory ***")
         # print("Raw:", model_output)
         # print("Embedding:", embedding)     
 
         # treat model as predicting a single id for a class label, based on the order in epoch_mapping
-        # Get class ID number for real barcode
-        key_list = sorted(list(self.mapping.keys()))
-        real_label_as_string = np.array2string(context_label.numpy())[
-            2:-2].replace(" ", "").replace(".", "")
-        real_label_id = torch.tensor([key_list.index(real_label_as_string)], dtype = torch.long)
 
         # Update pass over the embedding model with barcode IDs
         criterion = nn.CrossEntropyLoss()
@@ -315,15 +318,18 @@ class DND():
         self.embed_optimizer.step()
 
         # Freeze Embedder model until next memory retrieval
-        for param in agent.parameters():
-            # print(param)
-            # print(param.grad)
+        for name, param in agent.named_parameters():
+            # print(name, param.grad)
             param.requires_grad = False
 
         # print("*** Got New Memory ***")
         # Output barcode as string for downstream use
         # Get class ID number for predicted barcode
-        best_memory_id = torch.argmax(torch.softmax(model_output, dim = 1))
+        soft = torch.softmax(model_output, dim=1)
+        # print(soft)
+        best_memory_id = torch.argmax(soft)
+        # print(best_memory_id)
+        # print(key_list)
         predicted_context = key_list[int(best_memory_id)]
         # print('P-CTX:', predicted_context)
         # print('R-CTX:', real_label_as_string)
@@ -391,7 +397,7 @@ class DND():
         else:
             barcode = key_stored
 
-        barcode = np.array2string(barcode.numpy())[1:-1].replace(" ", "").replace(".", "")
+        barcode = np.array2string(barcode.cpu().numpy())[1:-1].replace(" ", "").replace(".", "")
         return best_memory_val, barcode
 
     def _get_memory(self, similarities, policy='1NN'):

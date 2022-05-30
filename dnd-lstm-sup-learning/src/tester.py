@@ -52,11 +52,35 @@ print(avg)
 #             print(name, diff)
 
 
-a = [0.6808, 0.7325]
-b = [x/sum(a) for x in a]
-print(b)
+# a = [0.6808, 0.7325]
+# b = [x/sum(a) for x in a]
+# print(b)
 
-for _ in range(20):
-    val = np.random.random()
-    reward = int(val < 0.9)
-    print(val, reward)
+# for _ in range(20):
+#     val = np.random.random()
+#     reward = int(val < 0.9)
+#     print(val, reward)
+
+filename = 'C:\\Users\\joshc\\Google Drive\\CS Research\\Memory-Storage-Ritter\\dnd-lstm-sup-learning\\src\\emb_data.txt'
+# filename.replace('\\', '\\\\')
+print(filename)
+returns = []
+accuracy = []
+log_loss_val = []
+with open(filename, 'r') as f:
+    for line in f:
+        # print(line)
+        splits = line.split('|')
+        print(splits)
+        returns.append(float(splits[1][-5:-1]))
+        accuracy.append(float(line[-4:]))
+        loss = splits[2].split(',')
+        print(loss)
+        loc = loss[0].index('=')+2
+        loss_val = loss[0][loc:]
+        print(loss_val)
+        log_loss_val.append(float(loss_val))
+        # print(returns)
+        # print(accuracy)
+        break
+print(returns, accuracy, log_loss_val)

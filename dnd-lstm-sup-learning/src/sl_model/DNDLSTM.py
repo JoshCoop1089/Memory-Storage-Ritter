@@ -16,21 +16,22 @@ class DNDLSTM(nn.Module):
 
     def __init__(self, 
                     dim_input_lstm, dim_hidden_lstm, dim_output_lstm,
-                    dict_len, exp_settings, bias=True):
+                    dict_len, exp_settings, device, bias=True):
         super(DNDLSTM, self).__init__()
         self.input_dim = dim_input_lstm
         self.dim_hidden_lstm = dim_hidden_lstm
         self.bias = bias
+        self.device = device
         self.exp_settings = exp_settings
         # input-hidden weights
         self.i2h = nn.Linear(dim_input_lstm, (N_GATES+1)
-                             * dim_hidden_lstm, bias=bias)
+                             * dim_hidden_lstm, bias=bias).to(self.device)
         # hidden-hidden weights
-        self.h2h = nn.Linear(dim_hidden_lstm, (N_GATES+1) * dim_hidden_lstm, bias=bias)
+        self.h2h = nn.Linear(dim_hidden_lstm, (N_GATES+1) * dim_hidden_lstm, bias=bias).to(self.device)
         # dnd
-        self.dnd = DND(dict_len, dim_hidden_lstm, exp_settings)
+        self.dnd = DND(dict_len, dim_hidden_lstm, exp_settings, self.device)
         #policy
-        self.a2c = A2C_linear(dim_hidden_lstm, dim_output_lstm)
+        self.a2c = A2C_linear(dim_hidden_lstm, dim_output_lstm).to(self.device)
         # init
         self.reset_parameter()
 
@@ -87,13 +88,16 @@ class DNDLSTM(nn.Module):
             for layer in layers_before:
                 for name, param in layer.named_parameters():
                     param.requires_grad = False 
-                # print(name, param.data)
+                # print(name, param.data, param.grad)
+
+            # print("B-Retrieve:\n", self.a2c.critic.weight.grad)
+            # print("B-Retrieve:\n", self.dnd.embedder.e2c.weight.grad)
 
             prior_vals = layers_before
     
             # Query Memory (hidden state passed into embedder, context used for embedder loss function)
             mem, predicted_barcode = self.dnd.get_memory(h, context)
-            m_t = mem.tanh()
+            m_t = mem.tanh().to(self.device)
 
             layers_after = [self.i2h, self.h2h, self.a2c]
             # Unfreeze LSTM
@@ -102,13 +106,28 @@ class DNDLSTM(nn.Module):
                     param.requires_grad = True 
                 # print(name, param.data)
 
-            # print(self.dnd.encoding_off)
+            # print("A-Retrieve:\n", self.a2c.critic.weight.grad)
+            # print("A-Retrieve:\n", self.dnd.embedder.e2c.weight.grad)
+
+            # # print(self.dnd.encoding_off)
             # if self.dnd.encoding_off == False:
             #     self.difference_of_weights(prior_vals)
 
         else:
+            # layers_before = [self.i2h, self.h2h, self.a2c]
+            # for layer in layers_before:
+            #     for name, param in layer.named_parameters():
+            #         # param.requires_grad = False 
+            #         print(name, param.data, param.grad)
             mem, predicted_barcode = self.dnd.get_memory_non_embedder(q_t)
-            m_t = mem.tanh()
+            m_t = mem.tanh().to(self.device)
+            
+            # layers_after = [self.i2h, self.h2h, self.a2c]
+            # print("A:", self.a2c.critic.weight.data, self.a2c.critic.weight.grad)
+            # for layer in layers_before:
+            #     for name, param in layer.named_parameters():
+            #         # param.requires_grad = False
+            #         print(name, param.data, param.grad)
 
         # gate the memory; in general, can be any transformation of it
         c_t = c_t + torch.mul(r_t, m_t)
@@ -190,5 +209,8 @@ class DNDLSTM(nn.Module):
         layers = [self.i2h, self.h2h, self.a2c]
         for layer_after, layer_before in zip(layers, prior_vals):
             for (name, param_after), (name, param_before) in zip(layer_after.named_parameters(), layer_before.named_parameters()):
-                diff = torch.sub(param_after, param_before)
-                print(name, diff)
+                try:
+                    diff = torch.sub(param_after.grad, param_before.grad)
+                    print(name, diff)
+                except Exception:
+                    continue
