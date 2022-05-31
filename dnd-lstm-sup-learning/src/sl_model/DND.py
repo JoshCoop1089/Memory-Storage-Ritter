@@ -127,7 +127,7 @@ class DND():
             return
 
         # ----End of Trial----
-        # Embedding Model should get frozen after saving before going back to main LSTM agent
+        # Embedding Model should get frozen after get_memory so this should never print anything
         for name, param in self.embedder.named_parameters():
             if param.requires_grad:
                 print (name, param.data)
@@ -137,7 +137,7 @@ class DND():
 
         keys = self.trial_buffer
 
-        # Since we're forcing only saves on valid barcodes, save full buffer per trial
+        # Save full buffer per trial
         trial_hidden_states = [keys[i] for i in range(len(keys)) if keys[i] != ()]
         # print(trial_hidden_states)
 
@@ -272,17 +272,14 @@ class DND():
             return
         
     def get_memory(self, query_key, context_label):
-        """Perform a 1-NN search over dnd
+        """
+        Embedder memory version:
 
-        Parameters
-        ----------
-        query_key : a row vector
-            a DND key, used to for memory search
+        Takes an input hidden state (query_key) and a ground truth barcode (context_label)
+        Passes the query key into the embedder model to get the predicted barcode
+        Uses self.key_context_map and the predicted barcode to retrieve the LSTM state stored for that barcode
 
-        Returns
-        -------
-        a row vector
-            a DND value, representing the memory content
+        Also handles the embedder model updates, and buffering information for the save_memory function at the end of the episode
         """
         # Get class ID number for real barcode
         key_list = sorted(list(self.mapping.keys()))
@@ -323,6 +320,7 @@ class DND():
             param.requires_grad = False
 
         # print("*** Got New Memory ***")
+
         # Output barcode as string for downstream use
         # Get class ID number for predicted barcode
         soft = torch.softmax(model_output, dim=1)
@@ -467,6 +465,6 @@ def _empty_memory(memory_dim):
     return torch.zeros(1, memory_dim)
 
 def _empty_barcode(memory_dim):
-    """Get a empty barcode, assuming the memory is a row vector
+    """Get a empty barcode, and pass it back as a string for comparison downstream
     """
     return np.array2string((torch.zeros(memory_dim)-1).numpy())[1:-1].replace(" ", "").replace(".", "")

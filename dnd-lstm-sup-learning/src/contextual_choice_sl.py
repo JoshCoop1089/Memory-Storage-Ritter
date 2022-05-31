@@ -107,7 +107,7 @@ def run_experiment_sl(exp_settings):
     # Only applicable for comparisons to Ritter/QiHong/Kaiser Update versions
     # SL Version doesn't need this param to work but it's kept in for simplicity
     dict_len = num_barcodes 
-    learning_rate = 5e-5
+    learning_rate = 5e-4
 
     # init agent / optimizer
     agent = Agent(dim_input_lstm, dim_hidden_lstm, dim_output_lstm,
@@ -160,7 +160,6 @@ def run_experiment_sl(exp_settings):
             # Clearing the per trial hidden state buffer
             agent.flush_trial_buffer()
 
-            barcodes_seen_prior = len(agent.dnd.key_context_map)
             # loop over time, for one training example
             for t in range(pulls_per_episode):
                 # only save memory at the last time point
@@ -196,30 +195,23 @@ def run_experiment_sl(exp_settings):
                 # if t == pulls_per_episode - 1:
                 #     print(f"R_t: {cumulative_reward} | Emb_Acc: {embedder_accuracy}")
 
-                # # Only give reward if arm pulled for proper task
-                # r_t = r_t*match
-
                 # log
                 probs.append(prob_a_t)
                 rewards.append(r_t)
                 values.append(v_t)
                 cumulative_reward += r_t
                 log_Y_hat[i, m, t] = a_t.item()
+            
             # print("-- end of ep --")
-            barcodes_seen_after = len(agent.dnd.key_context_map)
-            # if barcodes_seen_after != barcodes_seen_prior:
-            #     print("Episode:", m, "\t| Old:", barcodes_seen_prior, "\t| New:", barcodes_seen_after)
             returns = compute_returns(rewards, device)
             loss_policy, loss_value = compute_a2c_loss(probs, values, returns)
             loss = loss_policy + loss_value
 
+            # Testing for gradient leaks between embedder model and lstm model
             # print("B-End_of_Ep:\n", agent.a2c.critic.weight.grad)
             # print("B-End_of_Ep:\n", agent.dnd.embedder.e2c.weight.grad)
             optimizer.zero_grad()
-            retain_graph = False
-            # if exp_settings['mem_store'] == 'embedding':
-            #     retain_graph = True
-            loss.backward(retain_graph=retain_graph)
+            loss.backward()
             optimizer.step()
             # print("A-End_of_Ep:\n", agent.a2c.critic.weight.grad)
             # print("A-End_of_Ep:\n", agent.dnd.embedder.e2c.weight.grad)
@@ -343,7 +335,7 @@ def scale_to_01_range(x):
         return starts_from_zero / value_range
 
 def plot_tsne_distribution(keys, labels, fig, axes):
-    features = np.array([y.numpy() for y in keys])
+    features = np.array([y.cpu().numpy() for y in keys])
     tsne = TSNE(n_components=2).fit_transform(features)
     tx = tsne[:, 0]
     ty = tsne[:, 1]
@@ -352,7 +344,7 @@ def plot_tsne_distribution(keys, labels, fig, axes):
     label_list = [labels[i][0] for i in range(len(labels))]
     start, end = 0,0
     # # for every class, we'll add a scatter plot separately
-    for barcode, num, valid in labels:
+    for barcode, num, _ in labels:
         start = end
         end = end + num
         # find the samples of the current class in the data
@@ -360,28 +352,36 @@ def plot_tsne_distribution(keys, labels, fig, axes):
         # extract the coordinates of the points of this class only
         current_tx = np.take(tx, indices)
         current_ty = np.take(ty, indices)
-        marker = 'x' if valid else 'o'
         # add a scatter plot with the corresponding color and label
         # , label=f"B:{barcode} | Valid:{valid} | Num:{num}"
-        axes.scatter(current_tx, current_ty, marker = marker)
+        axes.scatter(current_tx, current_ty)
     return fig, axes
 
 if __name__  == '__main__':
+    """
+    # Current Params for Graphing:
+    hidden_lstm = 64
+    embedding_size = 1024
+    num_arms = 5
+    barcode_size = 5
+    num_barcodes = 5
+    pulls_per_episode = 30
+    """
 
     # Experimental Parameters
     exp_settings = {}
     exp_settings['randomize'] = False
-    exp_settings['epochs'] = 100
+    exp_settings['epochs'] = 2
     exp_settings['kernel'] = 'cosine'      #cosine, l2
     exp_settings['noise_percent'] = 0.5
     exp_settings['agent_input'] = 'obs/context'    #obs, obs/context
     exp_settings['mem_store'] = 'obs/context'  #obs/context, context, embedding, obs, hidden (unsure how to do obs, hidden return calc w/o barcode predictions)
     exp_settings['dim_hidden_lstm'] = 64
     exp_settings['embedding_size'] = 1024
-    exp_settings['num_arms'] = 5
-    exp_settings['barcode_size'] = 5
-    exp_settings['num_barcodes'] = 5
-    exp_settings['pulls_per_episode'] = 30
+    exp_settings['num_arms'] = 10
+    exp_settings['barcode_size'] = 10
+    exp_settings['num_barcodes'] = 10
+    exp_settings['pulls_per_episode'] = 10
     exp_settings['perfect_info'] = False
     exp_settings['reset_barcodes_per_epoch'] = True
 
@@ -389,7 +389,7 @@ if __name__  == '__main__':
     perfect_ret, random_ret = expected_return(
         exp_settings['num_arms'], exp_settings['perfect_info'])
     f, axes = plt.subplots(1, 2, figsize=(12, 6))
-    f1, axs = plt.subplots(1, 2, figsize=(12, 6))
+    f1, axs = plt.subplots(1, 2, figsize=(18, 6))
 
     # # Obs/Context in memory version
     # logs, key_data = run_experiment_sl(exp_settings)
@@ -399,11 +399,11 @@ if __name__  == '__main__':
     # axes[1].plot(log_loss_value, label=f'Obs/Context')
     # axs[0].plot(log_embedder_accuracy, label=f'Obs/Context')
 
-    # # Context in memory version
-    # exp_settings['mem_store'] = 'context'
-    # logs, key_data = run_experiment_sl(exp_settings)
-    # log_return, log_loss_value, log_embedder_accuracy, embedder_loss = logs
-    # keys, prediction_mapping, epoch_mapping, barcode_data = key_data 
+    # Context in memory version
+    exp_settings['mem_store'] = 'context'
+    logs, key_data = run_experiment_sl(exp_settings)
+    log_return, log_loss_value, log_embedder_accuracy, embedder_loss = logs
+    keys, prediction_mapping, epoch_mapping, barcode_data = key_data 
 
     # # Did the embedder graph run out of memory? Copy paste the console to a txt file and salvage some results
     # filename = 'C:\\Users\\joshc\\Google Drive\\CS Research\\Memory-Storage-Ritter\\dnd-lstm-sup-learning\\src\\cont_data.txt'
@@ -418,9 +418,8 @@ if __name__  == '__main__':
     #         loss_val = loss[0][loc:]
     #         log_loss_value.append(float(loss_val))
     # file.close()
-    # axes[0].plot(log_return, label=f'Context')
-    # axes[1].plot(log_loss_value, label=f'LSTM Context')
-    # axs[0].plot(log_embedder_accuracy, label=f'Context')
+    axes[0].plot(log_return, label=f'Ritter w/ Context')
+    axes[1].plot(log_loss_value, label=f'Ritter w/ LSTM Context')
 
     # Embedding Version
     exp_settings['reset_barcodes_per_epoch'] = False
@@ -438,6 +437,7 @@ if __name__  == '__main__':
     #     for line in file:
     #         splits = line.split('|')
     #         log_return.append(float(splits[1][-5:-1]))
+    #         log_embedder_accuracy.append(float(line[-4:]))
     #         loss = splits[2].split(',')
     #         loc = loss[0].index('=')+2
     #         loss_val = loss[0][loc:]
@@ -449,13 +449,11 @@ if __name__  == '__main__':
     axes[1].plot(embedder_loss, label = f'Embedding Model')
     axs[0].plot(log_embedder_accuracy, label=f"Embeddings")
     axs[1] = make_confusion_matrix(epoch_mapping, barcode_data)
-    # print("P-Bars to KeyID: ", prediction_mapping)
-    # print("R-Bars to Arm: ", epoch_mapping)
 
     # Graph Setup
     graph_title = f""" --- Memory Storage Type in Legend ---
     LSTM Hidden Dim: {exp_settings['dim_hidden_lstm']} | Embedding Dim: {exp_settings['embedding_size']} 
-    Barcode Dim: {exp_settings['barcode_size']} | Unique Barcodes: {exp_settings['num_barcodes']}
+    Epochs: {exp_settings['epochs']} | Unique Barcodes: {exp_settings['num_barcodes']} | Barcode Dim: {exp_settings['barcode_size']}
     Arms: {exp_settings['num_arms']} | Pulls per Trial: {exp_settings['pulls_per_episode']} | Perfect Arms: {exp_settings['perfect_info']}"""
 
     # Returns
@@ -466,6 +464,7 @@ if __name__  == '__main__':
     axes[0].legend(bbox_to_anchor=(0, -0.2, 1, 0), loc="upper left",
                mode="expand", borderaxespad=0, ncol=2)
 
+    # Loss for Embedder and LSTM models
     axes[1].set_ylabel('Loss')
     axes[1].set_xlabel('Epoch')
     axes[1].legend(bbox_to_anchor=(0, -0.2, 1, 0), loc="upper left",
@@ -474,7 +473,10 @@ if __name__  == '__main__':
     #Embedder Accuracy 
     axs[0].set_ylabel('Accuracy')
     axs[0].set_xlabel('Epoch')
+    axs[0].set_title('Embedding Model Barcode Prediction Accuracy')
     axs[0].axhline(y=1/exp_settings['num_barcodes'], color='b', linestyle='dashed', label = 'Random Choice')
+
+    # Why doesn't this work for this specific graph?  Is it because of the heatmap being passed in or something?
     axs[0].legend(bbox_to_anchor=(0, -0.2, 1, 0), loc="upper left",
                mode="expand", borderaxespad=0, ncol=2)
     axs[1].legend(bbox_to_anchor=(0, -0.2, 1, 0), loc="upper left",
@@ -485,34 +487,30 @@ if __name__  == '__main__':
     f.subplots_adjust(top=0.8)
     f.suptitle(graph_title)
 
-
-    # if exp_settings['mem_store'] == 'embedding':
-    #     # T-SNE Mapping Attempts (from https://learnopencv.com/t-sne-for-feature-visualization/)
-    #     labels = []
-    #     total_keys = exp_settings['pulls_per_episode']*(exp_settings['num_barcodes']**2)
-    #     for mem_id, barcode_keys in enumerate(keys):
-    #         # print(prediction_mapping)
-    #         num_keys = len(barcode_keys)
-    #         # print(mem_id, num_keys)
-    #         if num_keys > 0:
-    #             barcode = get_barcode(mem_id, prediction_mapping)
-    #             labels.append((barcode, round(100*num_keys/total_keys, 2)))
-    #     # print("Epoch Mapping:", epoch_mapping.keys())
-    #     print("Key Info:", labels, total_keys)
+    # T-SNE Mapping Attempts (from https://learnopencv.com/t-sne-for-feature-visualization/)
+    if exp_settings['mem_store'] == 'embedding':
+        labels = []
+        total_keys = exp_settings['pulls_per_episode']*(exp_settings['num_barcodes']**2)
+        for mem_id, barcode_keys in enumerate(keys):
+            # print(prediction_mapping)
+            num_keys = len(barcode_keys)
+            # print(mem_id, num_keys)
+            if num_keys > 0:
+                barcode = get_barcode(mem_id, prediction_mapping)
+                labels.append((barcode, num_keys, round(100*num_keys/total_keys, 2)))
+        # print("Epoch Mapping:", epoch_mapping.keys())
+        print("Key Info:", labels, total_keys)
         
-    #     flattened_keys = list(itertools.chain.from_iterable(keys))
-    #     # print(len(flattened_keys))
+        flattened_keys = list(itertools.chain.from_iterable(keys))
+        # print(len(flattened_keys))
         
-    #     f3, axes3 = plt.subplots(1, 1, figsize=(8, 5))
-    #     f3, axes3 = plot_tsne_distribution(flattened_keys, labels, f3, axes3)
-    #     axes3.xaxis.set_visible(False)
-    #     axes3.yaxis.set_visible(False)
-    #     axes3.set_title("t-SNE on Keys" + 
-    #         "\nX is a real barcode, O is a false predicted barcode" +
-    #         "\nDoesn't indicate if prediction was correct for specific observation" +
-    #         "\nOnly if it was within the set of possibly correct barcodes")
-    #     # axes3.legend(bbox_to_anchor=(0, -0.1, 1, 0), loc="upper left",
-    #     #            mode="expand", borderaxespad=0, ncol=2)
-    #     f3.tight_layout()
+        f3, axes3 = plt.subplots(1, 1, figsize=(8, 5))
+        f3, axes3 = plot_tsne_distribution(flattened_keys, labels, f3, axes3)
+        axes3.xaxis.set_visible(False)
+        axes3.yaxis.set_visible(False)
+        axes3.set_title("t-SNE on Embeddings from last epoch")
+        # axes3.legend(bbox_to_anchor=(0, -0.1, 1, 0), loc="upper left",
+        #            mode="expand", borderaxespad=0, ncol=2)
+        f3.tight_layout()
 
     plt.show()

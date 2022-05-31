@@ -81,12 +81,7 @@ def get_reward_from_assumed_barcode(a_t, reward_from_obs, assumed_barcode, mappi
         # print('how if more than once per episode')
         reward = 0
 
-    # reward = reward * reward_from_obs.item()
-    # print(reward)
-
     # print("P-R:", reward, "R-R:", reward_from_obs)
-    # reward = torch.tensor([reward])
-    # matched_reward = int(torch.equal(reward, reward_from_obs))
     return torch.tensor(reward).type(torch.FloatTensor).data
 
 def compute_a2c_loss(probs, values, returns):

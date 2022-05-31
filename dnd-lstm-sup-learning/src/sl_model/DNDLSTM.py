@@ -92,8 +92,6 @@ class DNDLSTM(nn.Module):
 
             # print("B-Retrieve:\n", self.a2c.critic.weight.grad)
             # print("B-Retrieve:\n", self.dnd.embedder.e2c.weight.grad)
-
-            prior_vals = layers_before
     
             # Query Memory (hidden state passed into embedder, context used for embedder loss function)
             mem, predicted_barcode = self.dnd.get_memory(h, context)
@@ -109,25 +107,11 @@ class DNDLSTM(nn.Module):
             # print("A-Retrieve:\n", self.a2c.critic.weight.grad)
             # print("A-Retrieve:\n", self.dnd.embedder.e2c.weight.grad)
 
-            # # print(self.dnd.encoding_off)
-            # if self.dnd.encoding_off == False:
-            #     self.difference_of_weights(prior_vals)
-
         else:
-            # layers_before = [self.i2h, self.h2h, self.a2c]
-            # for layer in layers_before:
-            #     for name, param in layer.named_parameters():
-            #         # param.requires_grad = False 
-            #         print(name, param.data, param.grad)
             mem, predicted_barcode = self.dnd.get_memory_non_embedder(q_t)
             m_t = mem.tanh().to(self.device)
             
-            # layers_after = [self.i2h, self.h2h, self.a2c]
             # print("A:", self.a2c.critic.weight.data, self.a2c.critic.weight.grad)
-            # for layer in layers_before:
-            #     for name, param in layer.named_parameters():
-            #         # param.requires_grad = False
-            #         print(name, param.data, param.grad)
 
         # gate the memory; in general, can be any transformation of it
         c_t = c_t + torch.mul(r_t, m_t)

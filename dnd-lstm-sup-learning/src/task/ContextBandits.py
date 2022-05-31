@@ -141,8 +141,7 @@ class ContextualBandit():
 
         """
         LSTM Input Format:
-        Single Trial of 10 pulls for one barcode
-        Trial is a sequence of 10 one hot encoded pulls indicating the pulled arm
+        Trial is a sequence of X one hot encoded pulls indicating the pulled arm
 
         [100, barcode2, 0] would be one pull in one trial for barcode2
         this would be a pull on arm0, and based on the mapping of barcode2, returns a reward of 0
@@ -170,10 +169,8 @@ class ContextualBandit():
 
     def generate_one_episode(self, barcode, mapping):
 
-        # Generate arm pulling sequence for single trial
+        # Generate arm pulling sequence for single episode
         # Creates an Arms X Pulls matrix, using np.eye to onehotencode arm pulls
-        # Unsure if this is actually doing what i want, given docs say it shouldn't be able to random sample rows... and that's what i'm trying to do
-        # But also it works when i tried it?  Need to check this more
         trial_pulls = np.eye(self.num_arms)[np.random.choice(
             self.num_arms,self.pulls_per_episode)]
 

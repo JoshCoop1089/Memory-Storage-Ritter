@@ -15,11 +15,11 @@ class Embedder(nn.Module):
         self.num_barcodes = exp_settings['num_barcodes']
 
         # Basic Layers
-        self.h2m = nn.Linear(self.input_dim, 4*embedding_size, bias=bias)
+        self.h2m = nn.Linear(self.input_dim, 2*embedding_size, bias=bias)
         self.mdrope = nn.Dropout(0.5)
-        self.m2e = nn.Linear(4*embedding_size, 2*embedding_size, bias=bias)
+        self.m2e = nn.Linear(2*embedding_size, 1*embedding_size, bias=bias)
         self.edropc = nn.Dropout(0.5)
-        self.e2c = nn.Linear(2*embedding_size, self.num_barcodes, bias=bias)
+        self.e2c = nn.Linear(1*embedding_size, self.num_barcodes, bias=bias)
 
         # init
         self.reset_parameter()
