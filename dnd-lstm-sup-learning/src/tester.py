@@ -61,26 +61,73 @@ print(avg)
 #     reward = int(val < 0.9)
 #     print(val, reward)
 
-filename = 'C:\\Users\\joshc\\Google Drive\\CS Research\\Memory-Storage-Ritter\\dnd-lstm-sup-learning\\src\\emb_data.txt'
-# filename.replace('\\', '\\\\')
-print(filename)
-returns = []
-accuracy = []
-log_loss_val = []
-with open(filename, 'r') as f:
-    for line in f:
-        # print(line)
-        splits = line.split('|')
-        print(splits)
-        returns.append(float(splits[1][-5:-1]))
-        accuracy.append(float(line[-4:]))
-        loss = splits[2].split(',')
-        print(loss)
-        loc = loss[0].index('=')+2
-        loss_val = loss[0][loc:]
-        print(loss_val)
-        log_loss_val.append(float(loss_val))
-        # print(returns)
-        # print(accuracy)
-        break
-print(returns, accuracy, log_loss_val)
+# filename = 'C:\\Users\\joshc\\Google Drive\\CS Research\\Memory-Storage-Ritter\\dnd-lstm-sup-learning\\src\\emb_data.txt'
+# # filename.replace('\\', '\\\\')
+# print(filename)
+# returns = []
+# accuracy = []
+# log_loss_val = []
+# with open(filename, 'r') as f:
+#     for line in f:
+#         # print(line)
+#         splits = line.split('|')
+#         print(splits)
+#         returns.append(float(splits[1][-5:-1]))
+#         accuracy.append(float(line[-4:]))
+#         loss = splits[2].split(',')
+#         print(loss)
+#         loc = loss[0].index('=')+2
+#         loss_val = loss[0][loc:]
+#         print(loss_val)
+#         log_loss_val.append(float(loss_val))
+#         # print(returns)
+#         # print(accuracy)
+#         break
+# print(returns, accuracy, log_loss_val)
+import torch
+import random
+
+
+def to_pth(np_array, pth_dtype=torch.FloatTensor):
+    return torch.tensor(np_array).type(pth_dtype)
+
+a = torch.zeros(3)
+b = {}
+b[a] = 1
+print(b)
+barcode_bag = set()
+num_arms = 4
+mapping = {}
+num_barcodes = 6
+barcode_size = 3
+barcode_bag_list = []
+while len(barcode_bag) <num_barcodes:
+    prior = len(barcode_bag)
+    barcode = np.random.randint(0, 2, (1, barcode_size))
+
+    # Avoid cosine similarity bug with barcode of all 0's
+    if np.sum(barcode) == 0:
+        continue
+
+    # barcode -> string starts out at '[[1 1 0]]', thus the reductions on the end
+    barcode_string = np.array2string(barcode)[2:-2].replace(" ", "")
+    barcode_bag.add(barcode_string)
+    if len(barcode_bag) - prior == 1:
+        barcode = to_pth(barcode)
+        barcode_bag_list.append(barcode)
+
+
+# Generate mapping of barcode to good arm
+for barcode in barcode_bag_list:
+    arm = random.randint(0, num_arms-1)
+    mapping[barcode] = arm
+
+# At least one barcode for every arm gets guaranteed
+unique_guarantees = random.sample(barcode_bag_list, num_arms)
+for arm, guarantee in enumerate(unique_guarantees):
+    mapping[guarantee] = arm
+
+
+print(mapping)
+
+

@@ -8,7 +8,7 @@ class ContextualChoice():
         self.obs_dim = obs_dim
         self.ctx_dim = obs_dim
         self.trial_length = trial_length
-        self.t_noise_off = t_noise_off
+        self.t_noise_off = t_noise_off 
         # 2nd level params
         self.x_dim = self.obs_dim + self.ctx_dim
         self.y_dim = 1

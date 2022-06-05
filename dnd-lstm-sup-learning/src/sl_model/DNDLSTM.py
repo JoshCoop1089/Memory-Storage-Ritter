@@ -33,7 +33,7 @@ class DNDLSTM(nn.Module):
         #policy
         self.a2c = A2C_linear(dim_hidden_lstm, dim_output_lstm).to(self.device)
         # init
-        self.reset_parameter()
+        # self.reset_parameter()
 
     def reset_parameter(self):
         for name, wts in self.named_parameters():
@@ -42,29 +42,36 @@ class DNDLSTM(nn.Module):
             elif 'bias' in name:
                 torch.nn.init.constant_(wts, 0)
 
-    def forward(self, observation, barcode, h, c):
+    def forward(self, observation_barcode, h, c):
         # unpack activity
         h = h.view(h.size(1), -1)
         c = c.view(c.size(1), -1)
+        observation_barcode = observation_barcode.view(observation_barcode.size(1), -1)
 
         # Form the inputs nicely
-        observation = observation.view(1, self.exp_settings['num_arms'])
-        context = barcode.view(1, self.exp_settings['barcode_size'])
-        # print('Obs: ', observation)
-        # print('R-CTX:', context)
+        observation = observation_barcode[0][:self.exp_settings['num_arms']].view(1, self.exp_settings['num_arms'])
+        context = observation_barcode[0][self.exp_settings['barcode_size']:].view(
+            1, self.exp_settings['barcode_size'])
+        # if not self.dnd.encoding_off:
+        #     print('Obs: ', observation)
+        #     print('R-CTX:', context)
 
         # Into LSTM
         if self.exp_settings['agent_input'] == 'obs/context':
-            x_t = torch.cat((observation, context), dim = 1)
-        else:  # self.exp_settings['agent_input'] == 'obs'
+            x_t = observation_barcode
+        elif self.exp_settings['agent_input'] == 'obs':
             x_t = observation
+        else:
+            raise ValueError('Incorrect agent_input type')
         # print(x_t)
 
         # Used for memory search/storage (non embedder versions)
         if self.exp_settings['mem_store'] == 'context':
             q_t = context
         elif self.exp_settings['mem_store'] == 'obs/context':
-            q_t = torch.cat((observation, context), dim=1)
+            q_t = observation_barcode
+        else:
+            raise ValueError('Incorrect mem_store type')
 
         # transform the input info
         Wx = self.i2h(x_t)
@@ -132,8 +139,8 @@ class DNDLSTM(nn.Module):
         h_t = h_t.view(1, h_t.size(0), -1)
         c_t = c_t.view(1, c_t.size(0), -1)
         # fetch activity
-        output = [a_t, predicted_barcode, prob_a_t, v_t, h_t, c_t]
-        cache = [f_t, i_t, o_t, r_t, m_t]
+        output = (a_t, predicted_barcode, prob_a_t, v_t, h_t, c_t)
+        cache = (f_t, i_t, o_t, r_t, m_t)
         return output, cache
 
     def pick_action(self, action_distribution):

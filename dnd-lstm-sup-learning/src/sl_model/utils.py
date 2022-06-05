@@ -63,6 +63,7 @@ def get_reward_from_assumed_barcode(a_t, reward_from_obs, assumed_barcode, mappi
     """
     try:
         # print(a_t, assumed_barcode)
+        # print(mapping)
         best_arm = mapping[assumed_barcode]
         # print(a_t.item(), best_arm)
         if perfect_info == False:
@@ -77,8 +78,8 @@ def get_reward_from_assumed_barcode(a_t, reward_from_obs, assumed_barcode, mappi
             reward = int(a_t.item() == best_arm)
 
     # Penalize a predicted barcode which isn't a part of the mapping for the epoch
-    except Exception:
-        # print('how if more than once per episode')
+    except Exception as e:
+        # print(e)
         reward = 0
 
     # print("P-R:", reward, "R-R:", reward_from_obs)
