@@ -19,7 +19,7 @@ class Embedder(nn.Module):
         self.mdrope = nn.Dropout(0.5)
         self.m2e = nn.Linear(2*embedding_size, 1*embedding_size, bias=bias)
         self.edropc = nn.Dropout(0.5)
-        self.e2c = nn.Linear(1*embedding_size, self.num_barcodes, bias=bias)
+        self.e2c = nn.Linear(2*embedding_size, self.num_barcodes, bias=bias)
 
         # init
         self.reset_parameter()
@@ -27,11 +27,11 @@ class Embedder(nn.Module):
     # Model should return an embedding and a context
     def forward(self, h):
         x = F.leaky_relu(self.h2m(h))
-        x = self.mdrope(x)
-        x = F.leaky_relu(self.m2e(x))
+        # x = self.mdrope(x)
+        # x = F.leaky_relu(self.m2e(x))
         embedding = x
-        x = self.edropc(x)
-        predicted_context = self.e2c(x)
+        x1 = self.edropc(x)
+        predicted_context = self.e2c(x1)
         return embedding, predicted_context
 
     def reset_parameter(self):

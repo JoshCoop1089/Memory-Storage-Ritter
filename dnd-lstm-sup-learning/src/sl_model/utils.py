@@ -1,6 +1,7 @@
+# from sklearn.metrics import mean_squared_error
 import torch
 import numpy as np
-from torch.nn.functional import smooth_l1_loss
+from torch.nn.functional import mse_loss, smooth_l1_loss
 
 '''helpers'''
 eps = np.finfo(np.float32).eps.item()
@@ -85,7 +86,7 @@ def get_reward_from_assumed_barcode(a_t, reward_from_obs, assumed_barcode, mappi
     # print("P-R:", reward, "R-R:", reward_from_obs)
     return torch.tensor(reward).type(torch.FloatTensor).data
 
-def compute_a2c_loss(probs, values, returns):
+def compute_a2c_loss(probs, values, returns, entropies):
     """compute the objective node for policy/value networks
 
     Parameters
@@ -106,10 +107,18 @@ def compute_a2c_loss(probs, values, returns):
     policy_grads, value_losses = [], []
     for prob_t, v_t, R_t in zip(probs, values, returns):
         A_t = R_t - v_t.item()
+        # print(A_t, R_t, v_t.item())
         policy_grads.append(-prob_t * A_t)
+        # value_losses.append(
+        #     mse_loss(torch.squeeze(v_t), torch.squeeze(R_t))
+        # )
         value_losses.append(
             smooth_l1_loss(torch.squeeze(v_t), torch.squeeze(R_t))
         )
+    # loss_policy = torch.stack(policy_grads).mean()
+    # loss_value = torch.stack(value_losses).mean()
+    # entropies = torch.stack(entropies).mean()
     loss_policy = torch.stack(policy_grads).sum()
     loss_value = torch.stack(value_losses).sum()
-    return loss_policy, loss_value
+    entropies = torch.stack(entropies).sum()
+    return loss_policy, loss_value, entropies

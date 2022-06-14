@@ -48,14 +48,15 @@ class ContextualBandit():
     def __init__(self, 
                     pulls_per_episode, episodes_per_epoch, 
                     num_arms, num_barcodes, barcode_size,
-                    reset_barcode_mapping, noise_observations,
-                    device, perfect_info = False):
+                    reset_barcode_mapping, reset_arms_per_epoch,
+                    noise_observations, device, perfect_info = False):
 
         # Task Specific
         self.device = device
         self.pulls_per_episode = pulls_per_episode
         self.episodes_per_epoch = episodes_per_epoch
         self.reset_barcode_mapping = reset_barcode_mapping
+        self.reset_arms_per_epoch = reset_arms_per_epoch
         self.noise_observations = noise_observations
 
         # Arm Specific
@@ -97,6 +98,10 @@ class ContextualBandit():
         if self.reset_barcode_mapping:
             self.epoch_mapping = self.generate_barcode_mapping()
 
+        # Reassign arms randomly within current barcode scheme
+        if self.reset_arms_per_epoch:
+            self.epoch_mapping = self.map_arms_to_barcodes(self.epoch_mapping)
+
         observation_p1, reward_p1, barcode_p1 = self.generate_trials_info(self.epoch_mapping)
 
         obs_barcodes = np.dstack([observation_p1, barcode_p1])
@@ -131,19 +136,23 @@ class ContextualBandit():
             barcode_string = np.array2string(barcode)[2:-2].replace(" ", "")
             barcode_bag.add(barcode_string)
 
-            # If it's a unique string, put the tensor into the list
-            # if len(barcode_bag) - prior == 1:
-            #     barcode = to_pth(barcode)
-            #     barcode_bag_list.append(barcode)
-
         barcode_bag_list = list(barcode_bag)
+        mapping = self.map_arms_to_barcodes(barcode_list = barcode_bag_list)
+        return mapping
+
+    def map_arms_to_barcodes(self, mapping = None, barcode_list = None):
+        if mapping:
+            barcode_list = list(mapping.keys())
+        else:
+            mapping = {}
+
         # Generate mapping of barcode to good arm
-        for barcode in barcode_bag_list:
+        for barcode in barcode_list:
             arm = random.randint(0, self.num_arms-1)
             mapping[barcode] = arm
 
         # At least one barcode for every arm gets guaranteed
-        unique_guarantees = random.sample(barcode_bag_list, self.num_arms)
+        unique_guarantees = random.sample(barcode_list, self.num_arms)
         for arm, guarantee in enumerate(unique_guarantees):
             mapping[guarantee] = arm
 

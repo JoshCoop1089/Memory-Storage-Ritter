@@ -51,6 +51,7 @@ class DND():
         self.hidden_lstm_dim = hidden_lstm_dim
         self.mapping = {}
         self.device = device
+        self.log_embedder_accuracy = ()
 
         # dynamic state
         self.encoding_off = False
@@ -233,7 +234,7 @@ class DND():
 
         try:
             # Trial buffer contained embedding,location from get_memory
-            for embedding, context_location in trial_hidden_states:
+            for embedding, context_location, _ in trial_hidden_states:
                 old_emb = self.keys[context_location]
                 self.keys[context_location] = [torch.squeeze(embedding.data)] + old_emb
                 self.vals[context_location] = torch.squeeze(memory_val.data)
@@ -241,7 +242,48 @@ class DND():
             print(e)
             pass
 
+        # Optimization Try
+        # Only update embedder if last 10 epochs are below threshold accuracy levels?
+        episodes = np.count_nonzero(self.log_embedder_accuracy)
+        if  episodes > 10:
+            avg_acc = self.log_embedder_accuracy[episodes-10:episodes].mean()
+        else:
+            avg_acc = self.log_embedder_accuracy[:episodes].mean()
+        
+        # print("Embedder Accuracy: ", round(avg_acc, 4))
+       
+        if avg_acc < (1-1/self.exp_settings['num_barcodes']):
+            # Embedding Model Loss Backprop Time
+            agent = self.embedder
+            loss_vals = [trial_hidden_states[i][2] for i in range(len(trial_hidden_states))]
+            episode_loss = torch.stack(loss_vals).mean()
+
+            # Unfreeze Embedder to train
+            for name, param in agent.named_parameters():
+                # print(name, param.grad)
+                param.requires_grad = True
+
+            self.embedder_loss.append(episode_loss)
+            self.embed_optimizer.zero_grad()
+            episode_loss.backward(retain_graph=True)
+            self.embed_optimizer.step()
+
+            # Freeze Embedder model until next memory retrieval
+            for name, param in agent.named_parameters():
+                # print(name, param.grad)
+                param.requires_grad = False
+        else:
+            self.embedder_loss.append(torch.tensor(0))
+
+
+
     def save_memory_non_embedder(self, memory_key, memory_val):
+
+        # ----During Trial----
+        # If not at end of episode return to training
+        if self.encoding_off:
+            return
+
         # All input is stored in memory (QiHong Github version)
         if self.exp_settings['mem_store'] == 'obs/context':
             self.keys.append([torch.squeeze(memory_key.data)])
@@ -257,38 +299,56 @@ class DND():
                 self.vals.pop(0)
             return
 
-        # Only context is stored in memory (Ritter Version)
-        # figure this out after testing the dict inputs
+        # # Only context is stored in memory (Ritter Version)
         elif self.exp_settings['mem_store'] == 'context':
-
             try:
                 key_list = [self.keys[x][0] for x in range(len(self.keys))]
-                # print("Keys:", key_list)
-                similarities = compute_similarities(
-                    memory_key, key_list, self.kernel)
+                # # print("Keys:", key_list)
+                # similarities = compute_similarities(
+                #     memory_key, key_list, self.kernel)
 
-                if torch.max(similarities) > 0.9:
-                    # print("Key seen before, replacing LSTM")
-                    # get the best-match memory
-                    _, best_memory_id = self._get_memory(similarities)
-                    self.vals[best_memory_id] = torch.squeeze(memory_val.data)
-                else:
+                # # # remove data dependant control flow
+                # # new_key = [[torch.squeeze(memory_key.data)]]
+                # # new_key.extend(self.keys)
+                # # self.keys = new_key
+
+                # # new_val = [torch.squeeze(memory_val.data)]
+                # # new_val.extend(self.vals)
+                # # self.vals = new_val
+
+                # prev_seen_task = torch.gt(torch.max(similarities), 0.9).item()
+                # if prev_seen_task:
+                #     # print("Key seen before, replacing LSTM")
+                #     # get the best-match memory
+                #     _, best_memory_id = self._get_memory(similarities)
+                #     self.vals[best_memory_id] = torch.squeeze(memory_val.data)
+                # else:
                     # print("New Key Main Branch:", memory_key.data)
-                    self.keys.append([torch.squeeze(memory_key.data)])
-                    self.vals.append(torch.squeeze(memory_val.data))
-
-            except IndexError:
-                self.keys.pop(0)
-                # print("New Key Exception Branch:", memory_key.data)
                 self.keys.append([torch.squeeze(memory_key.data)])
                 self.vals.append(torch.squeeze(memory_val.data))
 
-            # remove the oldest memory, if overflow
-            if len(self.keys) > self.dict_len:
+            except IndexError:
                 self.keys.pop(0)
-                self.vals.pop(0)
-            # print("Key List Short:", self.keys, len(self.keys))
-            return
+                # # print("New Key Exception Branch:", memory_key.data)
+                # new_key = [[torch.squeeze(memory_key.data)]]
+                # new_key.extend(self.keys)
+                # self.keys = new_key
+
+                # new_val = [torch.squeeze(memory_val.data)]
+                # new_val.extend(self.vals)
+                # self.vals = new_val
+                self.keys.append([torch.squeeze(memory_key.data)])
+                self.vals.append(torch.squeeze(memory_val.data))
+        # if torch.eq(torch.sum(self.keys[-1][0]),0):
+        #     self.keys.pop(-1)
+        #     self.vals.pop(-1)
+
+        # remove the oldest memory, if overflow
+        if len(self.keys) > self.dict_len:
+            self.keys.pop(0)
+            self.vals.pop(0)
+        # print("Key List Short:", self.keys, len(self.keys))
+        return
         
     def get_memory(self, query_key, context_label):
         """
@@ -300,6 +360,11 @@ class DND():
 
         Also handles the embedder model updates, and buffering information for the save_memory function at the end of the episode
         """
+
+        """
+        Change this to only do one backprop per episode
+        """
+
         # Get class ID number for real barcode
         key_list = sorted(list(self.mapping.keys()))
         real_label_as_string = np.array2string(context_label.cpu().numpy())[
@@ -327,12 +392,12 @@ class DND():
         # Update pass over the embedding model with barcode IDs
         criterion = nn.CrossEntropyLoss()
         emb_loss = criterion(model_output, real_label_id)
-        # print("Loss: ", loss)
-        self.embedder_loss.append(emb_loss)
+        # # print("Loss: ", loss)
+        # self.embedder_loss.append(emb_loss)
 
-        self.embed_optimizer.zero_grad()
-        emb_loss.backward(retain_graph = True)
-        self.embed_optimizer.step()
+        # self.embed_optimizer.zero_grad()
+        # emb_loss.backward(retain_graph = True)
+        # self.embed_optimizer.step()
 
         # Freeze Embedder model until next memory retrieval
         for name, param in agent.named_parameters():
@@ -371,7 +436,7 @@ class DND():
                 best_memory_val = _empty_memory(self.hidden_lstm_dim)
 
         # Store embedding and predicted class label memory index in trial_buffer
-        self.trial_buffer.append((embedding, context_location))
+        self.trial_buffer.append((embedding, context_location, emb_loss))
 
         pred_ctx = np.zeros(self.exp_settings['barcode_size'])
         for id, val in enumerate(predicted_context):
@@ -441,14 +506,16 @@ class DND():
             a DND value, representing the memory content
         """
         best_memory_val = None
-        if policy == '1NN':
-            # print("Sims:" , similarities)
-            best_memory_id = torch.argmax(similarities)
-            # self.recall_sims.append(similarities[best_memory_id].detach().numpy())
-            best_memory_val = self.vals[best_memory_id]
+        # if policy == '1NN':
+        # print("Sims:" , similarities)
+        # reverse the similarities list to capture most recent memory
+        rev_sims = torch.flip(similarities.view(1, similarities.size(0)), dims = (0, 1))
+        best_memory_id = rev_sims.shape[1] - 1 - torch.argmax(rev_sims)
+        # self.recall_sims.append(similarities[best_memory_id].detach().numpy())
+        best_memory_val = self.vals[best_memory_id]
 
-        else:
-            raise ValueError(f'unrecog recall policy: {policy}')
+        # else:
+        #     raise ValueError(f'unrecog recall policy: {policy}')
         return best_memory_val, best_memory_id
 
 """helpers"""
@@ -475,23 +542,23 @@ def compute_similarities(query_key, key_list, metric):
     # reshape memory keys to #keys x key_dim
     M = torch.stack(key_list)
     # compute similarities
-    if metric == 'cosine':
-        similarities = F.cosine_similarity(q, M)
-    elif metric == 'l1':
-        similarities = - F.pairwise_distance(q, M, p=1)
-    elif metric == 'l2':
-        similarities = - F.pairwise_distance(q, M, p=2)
-    else:
-        raise ValueError(f'unrecog metric: {metric}')
+    # if metric == 'cosine':
+    similarities = F.cosine_similarity(q, M)
+    # elif metric == 'l1':
+    #     similarities = - F.pairwise_distance(q, M, p=1)
+    # elif metric == 'l2':
+    #     similarities = - F.pairwise_distance(q, M, p=2)
+    # else:
+    #     raise ValueError(f'unrecog metric: {metric}')
     return similarities
 
 def _empty_memory(memory_dim):
     """Get a empty memory, assuming the memory is a row vector
     """
-    return torch.zeros((1,memory_dim))
+    return torch.squeeze(torch.zeros(memory_dim).data)
 
 def _empty_barcode(memory_dim):
     """Get a empty barcode, and pass it back as a string for comparison downstream
     """
     # np.array2string((torch.zeros(memory_dim)-1).numpy())[1:-1].replace(" ", "").replace(".", "")
-    return torch.sub(torch.zeros(memory_dim),torch.ones(memory_dim))
+    return torch.zeros(memory_dim)

@@ -45,11 +45,12 @@ class ContextualChoice():
         # combine the two phases
         X = np.vstack([observation_context_p1, observation_context_p2])
         Y = np.vstack([target_p1, target_p2])
+        contexts = np.vstack([context_p1, context_p2])
         # to pytorch form
         if to_torch:
             X = to_pth(X)
             Y = to_pth(Y, pth_dtype=torch.LongTensor)
-        return X, Y
+        return X, Y, contexts
 
     def _sample_n_trials(self, n_examples):
         observation = np.zeros((n_examples, self.trial_length, self.obs_dim))

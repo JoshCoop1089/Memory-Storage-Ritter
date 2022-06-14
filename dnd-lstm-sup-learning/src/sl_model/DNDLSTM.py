@@ -7,7 +7,7 @@ Proceedings of the International Conference on Machine Learning (ICML).
 import torch
 import torch.nn as nn
 from sl_model.DND import DND
-from sl_model.A2C import A2C_linear
+from sl_model.A2C import A2C_linear, A2C
 
 # constants
 N_GATES = 4
@@ -31,7 +31,8 @@ class DNDLSTM(nn.Module):
         # dnd
         self.dnd = DND(dict_len, dim_hidden_lstm, exp_settings, self.device)
         #policy
-        self.a2c = A2C_linear(dim_hidden_lstm, dim_output_lstm).to(self.device)
+        # self.a2c = A2C_linear(dim_hidden_lstm, dim_output_lstm).to(self.device)
+        self.a2c = A2C(dim_hidden_lstm, dim_hidden_lstm, dim_output_lstm).to(self.device)
         # init
         # self.reset_parameter()
 
@@ -42,15 +43,16 @@ class DNDLSTM(nn.Module):
             elif 'bias' in name:
                 torch.nn.init.constant_(wts, 0)
 
-    def forward(self, observation_barcode, h, c):
+    def forward(self, observation_barcode, reward_from_obs, h, c):
         # unpack activity
         h = h.view(h.size(1), -1)
         c = c.view(c.size(1), -1)
         observation_barcode = observation_barcode.view(observation_barcode.size(1), -1)
+        reward_from_obs = reward_from_obs.view(reward_from_obs.size(1), -1)
 
         # Form the inputs nicely
         observation = observation_barcode[0][:self.exp_settings['num_arms']].view(1, self.exp_settings['num_arms'])
-        context = observation_barcode[0][self.exp_settings['barcode_size']:].view(
+        context = observation_barcode[0][self.exp_settings['num_arms']:].view(
             1, self.exp_settings['barcode_size'])
         # if not self.dnd.encoding_off:
         #     print('Obs: ', observation)
@@ -58,7 +60,7 @@ class DNDLSTM(nn.Module):
 
         # Into LSTM
         if self.exp_settings['agent_input'] == 'obs/context':
-            x_t = observation_barcode
+            x_t = torch.concat((observation_barcode, reward_from_obs), dim=1)
         elif self.exp_settings['agent_input'] == 'obs':
             x_t = observation
         else:
@@ -66,12 +68,13 @@ class DNDLSTM(nn.Module):
         # print(x_t)
 
         # Used for memory search/storage (non embedder versions)
-        if self.exp_settings['mem_store'] == 'context':
-            q_t = context
-        elif self.exp_settings['mem_store'] == 'obs/context':
-            q_t = observation_barcode
-        else:
-            raise ValueError('Incorrect mem_store type')
+        if self.exp_settings['mem_store'] != 'embedding':
+            if self.exp_settings['mem_store'] == 'context':
+                q_t = context
+            elif self.exp_settings['mem_store'] == 'obs/context':
+                q_t = observation_barcode
+            else:
+                raise ValueError('Incorrect mem_store type')
 
         # transform the input info
         Wx = self.i2h(x_t)
@@ -117,7 +120,7 @@ class DNDLSTM(nn.Module):
         else:
             mem, predicted_barcode = self.dnd.get_memory_non_embedder(q_t)
             m_t = mem.tanh().to(self.device)
-            
+            # .view(1, mem.size(0))
             # print("A:", self.a2c.critic.weight.data, self.a2c.critic.weight.grad)
 
         # gate the memory; in general, can be any transformation of it
@@ -125,21 +128,34 @@ class DNDLSTM(nn.Module):
         # get gated hidden state from the cell state
         h_t = torch.mul(o_t, c_t.tanh())
 
-        if self.exp_settings['mem_store'] == 'embedding':
-            # Saving Memory (hidden state passed into embedder, embedding is key and c_t is val)
-            self.dnd.save_memory(h_t, c_t)
-        else:
-            self.dnd.save_memory_non_embedder(q_t, c_t)
+        if not self.dnd.encoding_off:
+            if self.exp_settings['mem_store'] == 'embedding':
+                # Freeze all LSTM Layers before getting memory
+                layers_before = [self.i2h, self.h2h, self.a2c]
+                for layer in layers_before:
+                    for name, param in layer.named_parameters():
+                        param.requires_grad = False 
+
+                # Saving Memory (hidden state passed into embedder, embedding is key and c_t is val)
+                self.dnd.save_memory(h_t, c_t)
+
+                layers_after = [self.i2h, self.h2h, self.a2c]
+                # Unfreeze LSTM
+                for layer in layers_after:
+                    for name, param in layer.named_parameters():
+                        param.requires_grad = True 
+            else:
+                self.dnd.save_memory_non_embedder(q_t, c_t)
 
         # policy
-        pi_a_t, v_t = self.a2c.forward(h_t)
+        pi_a_t, v_t, entropy = self.a2c.forward(h_t)
         # pick an action
         a_t, prob_a_t = self.pick_action(pi_a_t)
         # reshape data
         h_t = h_t.view(1, h_t.size(0), -1)
         c_t = c_t.view(1, c_t.size(0), -1)
         # fetch activity
-        output = (a_t, predicted_barcode, prob_a_t, v_t, h_t, c_t)
+        output = (a_t, predicted_barcode, prob_a_t, v_t, entropy, h_t, c_t)
         cache = (f_t, i_t, o_t, r_t, m_t)
         return output, cache
 

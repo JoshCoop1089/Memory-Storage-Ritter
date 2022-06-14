@@ -91,7 +91,7 @@ for i in range(n_epochs):
         loss_policy, loss_value = compute_a2c_loss(probs, values, returns)
         loss = loss_policy + loss_value
         optimizer.zero_grad()
-        loss.backward(retain_graph=True)
+        loss.backward()
         optimizer.step()
 
         # log
@@ -193,3 +193,4 @@ ax.legend(['left trial', 'right trial'], bbox_to_anchor=(.6, .3))
 sns.despine(offset=20)
 f.tight_layout()
 # f.savefig('../figs/pc-v.png', dpi=100, bbox_inches='tight')
+plt.show()
