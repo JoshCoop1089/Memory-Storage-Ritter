@@ -102,21 +102,13 @@ class ContextualBandit():
         if self.reset_arms_per_epoch:
             self.epoch_mapping = self.map_arms_to_barcodes(self.epoch_mapping)
 
-        observation_p1, reward_p1, barcode_p1 = self.generate_trials_info(self.epoch_mapping)
-
-        obs_barcodes = np.dstack([observation_p1, barcode_p1])
-        # Outputs stacked for LSTM
-        # observations = np.vstack([observation_p1])
-        # barcodes = np.vstack([barcode_p1])
-        rewards = np.vstack([reward_p1])
+        observation_p1, reward_p1, barcode_p1, barcode_strings = self.generate_trials_info(self.epoch_mapping)
+        obs_barcodes_rewards = np.dstack([observation_p1, barcode_p1, reward_p1])
 
         # to pytorch form
         if to_torch:
-            obs_barcodes = to_pth(obs_barcodes).to(self.device)
-            # observations = to_pth(observations).to(self.device)
-            # barcodes = to_pth(barcodes).to(self.device)
-            rewards = to_pth(rewards, pth_dtype=torch.LongTensor).to(self.device)
-        return obs_barcodes, rewards, self.epoch_mapping
+            obs_barcodes_rewards = to_pth(obs_barcodes_rewards).to(self.device)
+        return obs_barcodes_rewards, self.epoch_mapping, barcode_strings
 
     def generate_barcode_mapping(self):
         barcode_bag = set()
@@ -126,7 +118,6 @@ class ContextualBandit():
         # Array2String allows barcodes to be hashable in set to get uniqueness guarantees
         while len(barcode_bag) < self.num_barcodes:
             barcode = np.random.randint(0, 2, (1, self.barcode_size))
-            # prior = len(barcode_bag)
 
             # Avoid cosine similarity bug with barcode of all 0's
             if np.sum(barcode) == 0:
@@ -182,14 +173,14 @@ class ContextualBandit():
         observations = np.zeros((self.num_barcodes**2, self.pulls_per_episode, self.num_arms))
         rewards = np.zeros((self.num_barcodes**2, self.pulls_per_episode, 1))
         barcodes = np.zeros((self.num_barcodes**2, self.pulls_per_episode, self.barcode_size))
+        barcodes_strings = np.zeros((self.num_barcodes**2, self.pulls_per_episode, 1), dtype=object)
 
         for episode_num, barcode in enumerate(trial_barcode_bag):
-            observations[episode_num], rewards[episode_num], barcodes[episode_num] = self.generate_one_episode(barcode, mapping)
+            observations[episode_num], rewards[episode_num], barcodes[episode_num], barcodes_strings[episode_num] = self.generate_one_episode(barcode, mapping)
 
-        return observations, rewards, barcodes
+        return observations, rewards, barcodes, barcodes_strings
 
     def generate_one_episode(self, barcode, mapping):
-
         # Generate arm pulling sequence for single episode
         # Creates an Arms X Pulls matrix, using np.eye to onehotencode arm pulls
         trial_pulls = np.eye(self.num_arms)[np.random.choice(
@@ -198,7 +189,7 @@ class ContextualBandit():
         # Get reward for trial pulls
         # First pull barcode from mapping to ID good arm
         best_arm = mapping[barcode]
-        trial_rewards = np.zeros((self.pulls_per_episode, 1))
+        trial_rewards = np.zeros((self.pulls_per_episode, 1), dtype=np.float32)
         pull_num, arm_chosen = np.where(trial_pulls == 1)
 
         # Good arm has 90% chance of reward, all others have 10% chance
@@ -214,22 +205,23 @@ class ContextualBandit():
             else:  # self.perfect_info == True
                 reward = int(arm==best_arm)
 
-            trial_rewards[pull] = reward
+            trial_rewards[pull] = float(reward)
 
         # After generation of reward, use noise to obscure input for first x pulls of trial
         # Unsure how to implement this, just random generate a one hot encode, make more than one input, keep binary?
         
         # # Tile the barcode for all pulls in the episode
-        # bar_ar = torch.tile(barcode, (self.pulls_per_episode, 1))
+        bar_strings = np.zeros((self.pulls_per_episode, 1), dtype = object)
         bar_ar = np.zeros((self.pulls_per_episode, self.barcode_size))
         for num in range(self.pulls_per_episode):
+            bar_strings[num] = barcode
             for id, val in enumerate(barcode):
                 bar_ar[num][id] = int(val)
 
-        return trial_pulls, trial_rewards, bar_ar
+        return trial_pulls, trial_rewards, bar_ar, bar_strings
 
 def to_pth(np_array, pth_dtype=torch.FloatTensor):
-    return torch.tensor(np_array).type(pth_dtype)
+    return torch.as_tensor(np_array).type(pth_dtype)
 
 if __name__ == '__main__':
 

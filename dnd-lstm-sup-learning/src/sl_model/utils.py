@@ -29,7 +29,7 @@ def compute_returns(rewards, device, gamma=0, normalize=False):
     for r in rewards[::-1]:
         R = r + gamma * R
         returns.insert(0, R)
-    returns = torch.tensor(returns).to(device)
+    returns = torch.tensor(returns, device = device)
     if normalize:
         returns = (returns - returns.mean()) / (returns.std() + eps)
     return returns
@@ -56,7 +56,7 @@ def get_reward(a_t, a_t_targ):
         r_t = 0
     return torch.tensor(r_t).type(torch.FloatTensor).data
 
-def get_reward_from_assumed_barcode(a_t, reward_from_obs, assumed_barcode, mapping, perfect_info = False):
+def get_reward_from_assumed_barcode(a_t, assumed_barcode, mapping, device, perfect_info = False):
     """
     Uses the embedding models prediction of a barcode to pull a specific arm.
     The reward from that pull is checked against the reward from the observation.
@@ -84,7 +84,7 @@ def get_reward_from_assumed_barcode(a_t, reward_from_obs, assumed_barcode, mappi
         reward = 0
 
     # print("P-R:", reward, "R-R:", reward_from_obs)
-    return torch.tensor(reward).type(torch.FloatTensor).data
+    return torch.tensor(reward).type(torch.FloatTensor).to(device)
 
 def compute_a2c_loss(probs, values, returns, entropies):
     """compute the objective node for policy/value networks

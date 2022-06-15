@@ -33,26 +33,28 @@ class DNDLSTM(nn.Module):
         #policy
         # self.a2c = A2C_linear(dim_hidden_lstm, dim_output_lstm).to(self.device)
         self.a2c = A2C(dim_hidden_lstm, dim_hidden_lstm, dim_output_lstm).to(self.device)
+
+        # For some reason, if this is activated, the Embedder never learns, even though the embedder layers arent touched by this
         # init
         # self.reset_parameter()
 
     def reset_parameter(self):
         for name, wts in self.named_parameters():
+            # print(name)
             if 'weight' in name:
                 torch.nn.init.orthogonal_(wts)
             elif 'bias' in name:
                 torch.nn.init.constant_(wts, 0)
 
-    def forward(self, observation_barcode, reward_from_obs, h, c):
+    def forward(self, observation_barcode_reward, barcode_string, h, c):
         # unpack activity
         h = h.view(h.size(1), -1)
         c = c.view(c.size(1), -1)
-        observation_barcode = observation_barcode.view(observation_barcode.size(1), -1)
-        reward_from_obs = reward_from_obs.view(reward_from_obs.size(1), -1)
+        obs_bar_reward = observation_barcode_reward.view(observation_barcode_reward.size(1), -1)
 
         # Form the inputs nicely
-        observation = observation_barcode[0][:self.exp_settings['num_arms']].view(1, self.exp_settings['num_arms'])
-        context = observation_barcode[0][self.exp_settings['num_arms']:].view(
+        observation = obs_bar_reward[0][:self.exp_settings['num_arms']].view(1, self.exp_settings['num_arms'])
+        context = obs_bar_reward[0][self.exp_settings['num_arms']:-1].view(
             1, self.exp_settings['barcode_size'])
         # if not self.dnd.encoding_off:
         #     print('Obs: ', observation)
@@ -60,7 +62,7 @@ class DNDLSTM(nn.Module):
 
         # Into LSTM
         if self.exp_settings['agent_input'] == 'obs/context':
-            x_t = torch.concat((observation_barcode, reward_from_obs), dim=1)
+            x_t = obs_bar_reward
         elif self.exp_settings['agent_input'] == 'obs':
             x_t = observation
         else:
@@ -72,7 +74,7 @@ class DNDLSTM(nn.Module):
             if self.exp_settings['mem_store'] == 'context':
                 q_t = context
             elif self.exp_settings['mem_store'] == 'obs/context':
-                q_t = observation_barcode
+                q_t = obs_bar_reward
             else:
                 raise ValueError('Incorrect mem_store type')
 
@@ -104,8 +106,8 @@ class DNDLSTM(nn.Module):
             # print("B-Retrieve:\n", self.dnd.embedder.e2c.weight.grad)
     
             # Query Memory (hidden state passed into embedder, context used for embedder loss function)
-            mem, predicted_barcode = self.dnd.get_memory(h, context)
-            m_t = mem.tanh().to(self.device)
+            mem, predicted_barcode = self.dnd.get_memory(h, barcode_string)
+            m_t = mem.tanh()
 
             layers_after = [self.i2h, self.h2h, self.a2c]
             # Unfreeze LSTM
@@ -119,8 +121,7 @@ class DNDLSTM(nn.Module):
 
         else:
             mem, predicted_barcode = self.dnd.get_memory_non_embedder(q_t)
-            m_t = mem.tanh().to(self.device)
-            # .view(1, mem.size(0))
+            m_t = mem.tanh()
             # print("A:", self.a2c.critic.weight.data, self.a2c.critic.weight.grad)
 
         # gate the memory; in general, can be any transformation of it
@@ -145,7 +146,7 @@ class DNDLSTM(nn.Module):
                     for name, param in layer.named_parameters():
                         param.requires_grad = True 
             else:
-                self.dnd.save_memory_non_embedder(q_t, c_t)
+                self.dnd.save_memory_non_embedder(q_t, barcode_string, c_t)
 
         # policy
         pi_a_t, v_t, entropy = self.a2c.forward(h_t)
@@ -178,8 +179,9 @@ class DNDLSTM(nn.Module):
         return a_t, log_prob_a_t
 
     def get_init_states(self, scale=.1):
-        h_0 = torch.randn(1, 1, self.dim_hidden_lstm) * scale
-        c_0 = torch.randn(1, 1, self.dim_hidden_lstm) * scale
+        h_0 = torch.randn(1, 1, self.dim_hidden_lstm, device = self.device) * scale
+        c_0 = torch.randn(1, 1, self.dim_hidden_lstm,
+                          device=self.device) * scale
         return h_0, c_0
 
     def flush_trial_buffer(self):

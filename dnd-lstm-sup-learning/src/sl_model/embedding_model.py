@@ -16,8 +16,8 @@ class Embedder(nn.Module):
 
         # Basic Layers
         self.h2m = nn.Linear(self.input_dim, 2*embedding_size, bias=bias)
-        self.mdrope = nn.Dropout(0.5)
-        self.m2e = nn.Linear(2*embedding_size, 1*embedding_size, bias=bias)
+        # self.mdrope = nn.Dropout(0.5)
+        # self.m2e = nn.Linear(2*embedding_size, 1*embedding_size, bias=bias)
         self.edropc = nn.Dropout(0.5)
         self.e2c = nn.Linear(2*embedding_size, self.num_barcodes, bias=bias)
 
@@ -36,6 +36,7 @@ class Embedder(nn.Module):
 
     def reset_parameter(self):
         for name, wts in self.named_parameters():
+            # print("emb: ", name)
             if 'weight' in name:
                 torch.nn.init.orthogonal_(wts)
             elif 'bias' in name:
