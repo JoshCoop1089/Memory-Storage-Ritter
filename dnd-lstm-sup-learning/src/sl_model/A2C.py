@@ -31,11 +31,14 @@ class A2C(nn.Module):
     def __init__(self, dim_input, dim_hidden, dim_output):
         super(A2C, self).__init__()
         self.dim_input = dim_input
-        self.dim_hidden = dim_hidden
         self.dim_output = dim_output
 
+        # Make this changed from exp_settings?
+        self.dropout = 0.25
+
         # Smaller as you go further in?
-        self.dim_hidden = 2*(dim_input + dim_output) - 1
+        self.dim_hidden = dim_hidden
+        # self.dim_hidden = 2*(dim_input + dim_output) - 1
 
         # Actor/Policy Network
         self.ih = nn.Linear(dim_input, self.dim_hidden)
@@ -72,13 +75,13 @@ class A2C(nn.Module):
         # h_c = F.leaky_relu(self.ih_c(x))
         # h_c = nn.Dropout(0.5)(h_c)
         # h_c = F.leaky_relu(self.ih_c2(h_c))
-        # h_c = nn.Dropout(0.5)(h_c)
+        # h_c = nn.Dropout(self.dropout)(h)
         value_estimate = self.critic(h)
 
         # Actor Network
         # h = nn.Dropout(0.5)(h)
         # h = F.leaky_relu(self.ih2(h))
-        # h = nn.Dropout(0.5)(h)
+        # h = nn.Dropout(self.dropout)(h)
         action_distribution = softmax(self.actor(h), beta)
 
         # Entropy caluclation for exploration

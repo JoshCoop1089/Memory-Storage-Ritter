@@ -20,6 +20,7 @@ class DNDLSTM(nn.Module):
         super(DNDLSTM, self).__init__()
         self.input_dim = dim_input_lstm
         self.dim_hidden_lstm = dim_hidden_lstm
+        self.dim_hidden_a2c = exp_settings['dim_hidden_a2c']
         self.bias = bias
         self.device = device
         self.exp_settings = exp_settings
@@ -32,7 +33,7 @@ class DNDLSTM(nn.Module):
         self.dnd = DND(dict_len, dim_hidden_lstm, exp_settings, self.device)
         #policy
         # self.a2c = A2C_linear(dim_hidden_lstm, dim_output_lstm).to(self.device)
-        self.a2c = A2C(dim_hidden_lstm, dim_hidden_lstm, dim_output_lstm).to(self.device)
+        self.a2c = A2C(dim_hidden_lstm, self.dim_hidden_a2c, dim_output_lstm).to(self.device)
 
         # For some reason, if this is activated, the Embedder never learns, even though the embedder layers arent touched by this
         # init

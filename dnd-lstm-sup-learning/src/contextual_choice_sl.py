@@ -96,8 +96,8 @@ def run_experiment_sl(exp_settings):
         # LSTM Chooses which arm to pull
         dim_output_lstm = num_arms
         dict_len = num_barcodes**2
-        value_weight = 0.5
-        entropy_weight = 0.01
+        value_weight = exp_settings['value_error_coef']
+        entropy_weight = exp_settings['entropy_error_coef']
 
     elif exp_settings['task_version'] == 'original':
         task = ContextualChoice(
@@ -279,45 +279,48 @@ def run_experiment_sl(exp_settings):
         # print out some stuff
         time_end = time.time()
         run_time[i] = time_end - time_start
-        # print(sorted(list(epoch_mapping.keys())))
-        print(
-            'Epoch %3d | avg_return = %.2f | loss: val = %.2f, pol = %.2f | time = %.2f'%
-            (i, log_return[i], log_loss_value[i], log_loss_policy[i], run_time[i])
-        )
+
+        # Print reports every 10% of the total number of epochs
+        if i%(int(n_epochs/10)) == 0 or i == n_epochs-1:
+            print(
+                'Epoch %3d | avg_return = %.2f | loss: val = %.2f, pol = %.2f | time = %.2f'%
+                (i, log_return[i], log_loss_value[i], log_loss_policy[i], run_time[i])
+            )
 
         # Tensorboard Stuff
-        tb.add_scalar("LSTM Loss_Value", log_loss_value[i], i)
-        tb.add_scalar("LSTM Loss_Policy", log_loss_policy[i], i)
-        tb.add_scalar("LSTM Total Loss",
-                    log_loss_policy[i]+log_loss_value[i], i)
-        tb.add_scalar("LSTM Returns", log_return[i], i)
-        tb.add_scalar("Barcode Prediction Accuracy",
-                        agent.dnd.log_embedder_accuracy[i], i)
-        if i%5 == 0:
-            for name, weight in agent.named_parameters():
-                tb.add_histogram(name, weight, i)
-                try:
-                    tb.add_histogram(f'{name}.grad', weight.grad, i)
-                    tb.add_histogram(f'{name}_grad_norm', weight.grad.norm(), i)
-                except Exception:
-                    continue
-
-            if exp_settings['mem_store'] == 'embedding':
-                episodes = np.count_nonzero(agent.dnd.log_embedder_accuracy)
-                if  episodes > 10:
-                    avg_acc = agent.dnd.log_embedder_accuracy[episodes-10:episodes].mean()
-                elif episodes != 0:
-                    avg_acc = agent.dnd.log_embedder_accuracy[:episodes].mean()
-                else:
-                    avg_acc = 0
-                print("Embedder Accuracy: ", round(avg_acc, 4))
-                for name, weight in agent.dnd.embedder.named_parameters():
+        if exp_settings['tensorboard_logging']:
+            tb.add_scalar("LSTM Loss_Value", log_loss_value[i], i)
+            tb.add_scalar("LSTM Loss_Policy", log_loss_policy[i], i)
+            tb.add_scalar("LSTM Total Loss",
+                        log_loss_policy[i]+log_loss_value[i], i)
+            tb.add_scalar("LSTM Returns", log_return[i], i)
+            tb.add_scalar("Barcode Prediction Accuracy",
+                            agent.dnd.log_embedder_accuracy[i], i)
+            if i%5 == 0:
+                for name, weight in agent.named_parameters():
                     tb.add_histogram(name, weight, i)
                     try:
                         tb.add_histogram(f'{name}.grad', weight.grad, i)
                         tb.add_histogram(f'{name}_grad_norm', weight.grad.norm(), i)
                     except Exception:
                         continue
+
+                if exp_settings['mem_store'] == 'embedding':
+                    episodes = np.count_nonzero(agent.dnd.log_embedder_accuracy)
+                    if  episodes > 10:
+                        avg_acc = agent.dnd.log_embedder_accuracy[episodes-10:episodes].mean()
+                    elif episodes != 0:
+                        avg_acc = agent.dnd.log_embedder_accuracy[:episodes].mean()
+                    else:
+                        avg_acc = 0
+                    print("Embedder Accuracy: ", round(avg_acc, 4))
+                    for name, weight in agent.dnd.embedder.named_parameters():
+                        tb.add_histogram(name, weight, i)
+                        try:
+                            tb.add_histogram(f'{name}.grad', weight.grad, i)
+                            tb.add_histogram(f'{name}_grad_norm', weight.grad.norm(), i)
+                        except Exception:
+                            continue
 
     # Additional returns to graph out of this file
     keys, prediction_mapping = agent.get_all_mems_embedder()
@@ -330,7 +333,9 @@ def run_experiment_sl(exp_settings):
         for m in range(n_epochs):
             for i in range(episodes_per_epoch):
                 embedder_loss[m] += embed_loss[m*episodes_per_epoch+i]/episodes_per_epoch
-            tb.add_scalar("Embedder Loss", embedder_loss[m], m)
+
+            if exp_settings['tensorboard_logging']:
+                tb.add_scalar("Embedder Loss", embedder_loss[m], m)
 
     logs = log_return, log_loss_value, log_loss_policy, agent.dnd.log_embedder_accuracy, embedder_loss
     key_data = keys, prediction_mapping, epoch_mapping, barcode_data
@@ -471,23 +476,35 @@ if __name__  == '__main__':
     # Experimental Parameters
     exp_settings = {}
     exp_settings['randomize'] = False
-    exp_settings['epochs'] = 4000
+    exp_settings['tensorboard_logging'] = True
+
+    # Task Info
     exp_settings['kernel'] = 'cosine'           #cosine, l2
-    exp_settings['noise_percent'] = 0.5
     exp_settings['agent_input'] = 'obs/context' #obs, obs/context
     exp_settings['mem_store'] = 'context'   #obs/context, context, embedding, obs, hidden (unsure how to do obs, hidden return calc w/o barcode predictions)
-    exp_settings['dim_hidden_lstm'] = 128
-    exp_settings['embedding_size'] = 512
-    exp_settings['num_arms'] = 10
-    exp_settings['barcode_size'] = 10
-    exp_settings['num_barcodes'] = 10
-    exp_settings['pulls_per_episode'] = 25
+    exp_settings['task_version'] = 'bandit'      #bandit, original
+    exp_settings['noise_percent'] = 0.5
+    exp_settings['epochs'] = 1500
+    exp_settings['num_arms'] = 4
+    exp_settings['barcode_size'] = 4
+    exp_settings['num_barcodes'] = 4
+    exp_settings['pulls_per_episode'] = 10
     exp_settings['perfect_info'] = False
     exp_settings['reset_barcodes_per_epoch'] = False
     exp_settings['reset_arms_per_epoch'] = True
+
+    # LSTM Model Info
+    exp_settings['dim_hidden_lstm'] = 128
     exp_settings['lstm_learning_rate'] = 5e-4
+    exp_settings['value_error_coef'] = 0.5
+    exp_settings['entropy_error_coef'] = 0.01
+
+    # A2C Model Info
+    exp_settings['dim_hidden_a2c'] = 256
+
+    # Embedder Model Info
+    exp_settings['embedding_size'] = 512
     exp_settings['embedder_learning_rate'] = 5e-4
-    exp_settings['task_version'] = 'bandit'      #bandit, original
 
     perfect_ret, random_ret = expected_return(
         exp_settings['num_arms'], exp_settings['perfect_info'])
