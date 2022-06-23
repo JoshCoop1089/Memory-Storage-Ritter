@@ -42,9 +42,9 @@ def run_experiment_sl(exp_settings):
     embedder_learning_rate: float (learning rate for the Embedder-Barcode Prediction optimizer)
     task_version: string (bandit or original QiHong task)
     """
-
     # Tensorboard viewing
-    tb = SummaryWriter()
+    if exp_settings['tensorboard_logging']:
+        tb = SummaryWriter()
 
     # GPU is faster for everything but smaller LSTM dims on non embedder tests
     if exp_settings['dim_hidden_lstm'] <= 256 and exp_settings['mem_store'] != 'embedding':
