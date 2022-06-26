@@ -128,17 +128,20 @@ def run_experiment_sl(exp_settings):
 
     # init agent / optimizer
     agent = Agent(dim_input_lstm, dim_hidden_lstm, dim_output_lstm,
-                     dict_len, exp_settings, device).to(device)
+                     dict_len, exp_settings, device)
     optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, agent.parameters()), lr=learning_rate)
     # scheduler = LRScheduler.OneCycleLR(
     #     optimizer, max_lr=learning_rate, steps_per_epoch=episodes_per_epoch, epochs=n_epochs)
 
     '''train'''
     run_time = np.zeros(n_epochs,)
+    task_cumulative, pull_cumulative, episode_cumulative = 0,0,0
+    pull_timings = {}
     log_return = np.zeros(n_epochs,)
     agent.dnd.log_embedder_accuracy = np.zeros(n_epochs,)
     log_loss_value = np.zeros(n_epochs,)
     log_loss_policy = np.zeros(n_epochs,)
+    log_loss_total = np.zeros(n_epochs,)
     log_Y = np.zeros((n_epochs, episodes_per_epoch, pulls_per_episode))
     log_Y_hat = np.zeros((n_epochs, episodes_per_epoch, pulls_per_episode))
 
@@ -146,7 +149,7 @@ def run_experiment_sl(exp_settings):
     print("\n", "-*-_-*-"*3, "\n")
     # loop over epoch
     for i in range(n_epochs):
-        time_start = time.time()
+        time_start = time.perf_counter()
         if i < n_epochs - 1:
             barcode_data.append([[]])
 
@@ -160,6 +163,9 @@ def run_experiment_sl(exp_settings):
 
         elif exp_settings['task_version'] == 'original':
             X, Y, contexts = task.sample(num_barcodes)
+        
+        if exp_settings['timing']:
+            task_cumulative += (time.perf_counter() - time_start)
 
         # flush hippocampus
         agent.reset_memory()
@@ -168,6 +174,10 @@ def run_experiment_sl(exp_settings):
 
         # loop over the training set
         for m in range(episodes_per_epoch):
+
+            if exp_settings['timing']:
+                episode_start = time.perf_counter()
+
             # prealloc
             embedder_accuracy = 0
             cumulative_reward = 0
@@ -193,6 +203,9 @@ def run_experiment_sl(exp_settings):
 
             # loop over time, for one training example
             for t in range(pulls_per_episode):
+                
+                if exp_settings['timing']:
+                    pull_start = time.perf_counter()
 
                 # only save memory at the last time point
                 agent.turn_off_encoding()
@@ -200,14 +213,15 @@ def run_experiment_sl(exp_settings):
                     agent.turn_on_encoding()
 
                 if exp_settings['task_version'] == 'bandit':
-                    output_t, _ = agent(observations_barcodes_rewards[m][t].view(1, 1, -1), 
+                    output_t, cache = agent(observations_barcodes_rewards[m][t].view(1, 1, -1), 
                                             barcode_strings[m][t],
                                             h_t, c_t)
                     a_t, assumed_barcode_string, prob_a_t, v_t, entropy, h_t, c_t = output_t
+                    _, _, _, _, _, timings = cache
 
                 elif exp_settings['task_version'] == 'original':
                     # print(X[m][t])
-                    output_t, _ = agent(X[m][t].view(1, 1, -1),
+                    output_t, _ = agent(X[m][t].view(1, 1, -1), "",
                                             h_t, c_t)
                     a_t, assumed_barcode_string, prob_a_t, v_t, entropy, h_t, c_t = output_t
                     
@@ -236,7 +250,13 @@ def run_experiment_sl(exp_settings):
                 values.append(v_t)
                 entropies.append(entropy)
                 cumulative_reward += r_t
-                log_Y_hat[i, m, t] = a_t.item()
+                # log_Y_hat[i, m, t] = a_t.item()
+
+                if exp_settings['timing']:
+                    for k,v in timings.items():
+                        pull_timings[k] = pull_timings.get(k,0) + v
+                    pull_cumulative += (time.perf_counter() - pull_start)
+                    
 
             # print("-- end of ep --")
             for name, param in agent.named_parameters():
@@ -252,7 +272,7 @@ def run_experiment_sl(exp_settings):
             # print("B-End_of_Ep:\n", agent.dnd.embedder.e2c.weight.grad)
             optimizer.zero_grad()
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(agent.parameters(), 1)
+            # torch.nn.utils.clip_grad_norm_(agent.parameters(), 1)
             optimizer.step()
             # print("A-End_of_Ep:\n", agent.a2c.critic.weight.grad)
             # print("A-End_of_Ep:\n", agent.dnd.embedder.e2c.weight.grad)
@@ -264,38 +284,42 @@ def run_experiment_sl(exp_settings):
             #    log_Y[i] += np.squeeze(Y[m][t].cpu().numpy())
             
             # Updating avg return per episode
-            log_return[i] += cumulative_reward.item()/(episodes_per_epoch*pulls_per_episode)
+            log_return[i] += torch.div(cumulative_reward, (episodes_per_epoch*pulls_per_episode))
            
             # Updating avg accuracy per episode
-            agent.dnd.log_embedder_accuracy[i] += embedder_accuracy / (episodes_per_epoch*pulls_per_episode)
+            agent.dnd.log_embedder_accuracy[i] += torch.div(embedder_accuracy, (episodes_per_epoch*pulls_per_episode))
             
             # Loss Logging
-            log_loss_value[i] += loss_value.item() / episodes_per_epoch
-            log_loss_policy[i] += loss_policy.item() / episodes_per_epoch
+            log_loss_value[i] += torch.div(loss_value, episodes_per_epoch)
+            log_loss_policy[i] += torch.div(loss_policy, episodes_per_epoch)
+            log_loss_total[i] += torch.div(loss, episodes_per_epoch)
         
             # # Learning Rate Scheduler
             # scheduler.step()
 
+            if exp_settings['timing']:
+                episode_cumulative += (time.perf_counter() - episode_start)
+
         # print out some stuff
-        time_end = time.time()
+        time_end = time.perf_counter()
         run_time[i] = time_end - time_start
 
         # Print reports every 10% of the total number of epochs
         if i%(int(n_epochs/10)) == 0 or i == n_epochs-1:
             print(
-                'Epoch %3d | avg_return = %.2f | loss: val = %.2f, pol = %.2f | time = %.2f'%
-                (i, log_return[i], log_loss_value[i], log_loss_policy[i], run_time[i])
+                'Epoch %3d | avg_return = %.2f | loss: val = %.2f, pol = %.2f, tot = %.2f | time = %.2f'%
+                (i, log_return[i], log_loss_value[i], log_loss_policy[i], log_loss_total[i], run_time[i])
             )
 
         # Tensorboard Stuff
         if exp_settings['tensorboard_logging']:
             tb.add_scalar("LSTM Loss_Value", log_loss_value[i], i)
             tb.add_scalar("LSTM Loss_Policy", log_loss_policy[i], i)
-            tb.add_scalar("LSTM Total Loss",
-                        log_loss_policy[i]+log_loss_value[i], i)
+            tb.add_scalar("LSTM Total Loss", log_loss_total[i], i)
             tb.add_scalar("LSTM Returns", log_return[i], i)
-            tb.add_scalar("Barcode Prediction Accuracy",
-                            agent.dnd.log_embedder_accuracy[i], i)
+            if exp_settings['mem_store'] == 'embedding':
+                tb.add_scalar("Barcode Prediction Accuracy",
+                                agent.dnd.log_embedder_accuracy[i], i)
             if i%5 == 0:
                 for name, weight in agent.named_parameters():
                     tb.add_histogram(name, weight, i)
@@ -337,11 +361,54 @@ def run_experiment_sl(exp_settings):
             if exp_settings['tensorboard_logging']:
                 tb.add_scalar("Embedder Loss", embedder_loss[m], m)
 
-    logs = log_return, log_loss_value, log_loss_policy, agent.dnd.log_embedder_accuracy, embedder_loss
+    logs = log_return, log_loss_value, log_loss_policy, log_loss_total, agent.dnd.log_embedder_accuracy, embedder_loss
     key_data = keys, prediction_mapping, epoch_mapping, barcode_data
+    
+    # Final Results
+    print("- - - "*3)
+    final_q = 3*(exp_settings['epochs']//4)
+    print("Last Quarter Return Avg: ", round(np.mean(log_return[final_q:]), 3))
+    print("Total Time Elapsed:", round(sum(run_time), 1), "secs")
+    print("Individual Part Avg Times: (time, percent of section)")
 
-    tb.flush()
-    tb.close()
+    if exp_settings['timing']:
+        # Time Logging
+        import pprint
+        tot_epis = episodes_per_epoch*n_epochs
+        tot_pulls = pulls_per_episode*tot_epis
+        for k,v in pull_timings.items():
+            if "Save" in k:
+                pull_timings[k]/=tot_epis
+            else:
+                pull_timings[k]/=tot_pulls
+        epoch = np.mean(run_time)
+        epi = episode_cumulative/(tot_epis)
+        pull = pull_cumulative/(tot_pulls)
+        task_init = task_cumulative/n_epochs
+        time_outs = {   
+                        "1. Pull": (pull, 100*pull/pull),
+                        "2. Episode Actual": (epi, 100*epi/epi),
+                        "2a. Episode Predicted": (pull*pulls_per_episode, 100*pull*pulls_per_episode/epi),
+                        "2b. Episode Overhead": (epi-pull*pulls_per_episode, 100*(epi-pull*pulls_per_episode)/epi),
+                        "3. Epoch Actual": (epoch, 100*epoch/epoch),
+                        "3a. Epoch Predicted": (epi*episodes_per_epoch, 100*epi*episodes_per_epoch/epoch),
+                        "3b. Epoch Overhead": (epoch - epi*episodes_per_epoch, 100*(epoch - epi*episodes_per_epoch)/epoch),
+                        "4. Task Init Actual": (task_init, 100*task_init/task_init),
+                    }
+        for k,v in pull_timings.items():
+            pull_timings[k] = [v]
+            pull_timings[k].append(100*v/pull)
+        
+        time_outs = time_outs | pull_timings
+
+        time_out = {key:(round(time_outs[key][0], 5), round(time_outs[key][1], 1)) for key in time_outs}
+        pprint.pprint(time_out)
+    print("- - - "*3)
+
+    if exp_settings['tensorboard_logging']:
+        tb.flush()
+        tb.close()
+
     return  logs, key_data
 
 def update_avg_value(current_list, epoch_num, episode_num, episode_sum, episodes_per_epoch, pulls_per_episode):
@@ -477,6 +544,7 @@ if __name__  == '__main__':
     exp_settings = {}
     exp_settings['randomize'] = False
     exp_settings['tensorboard_logging'] = True
+    exp_settings['timing'] = True
 
     # Task Info
     exp_settings['kernel'] = 'cosine'           #cosine, l2
@@ -485,22 +553,32 @@ if __name__  == '__main__':
     exp_settings['task_version'] = 'bandit'      #bandit, original
     exp_settings['noise_percent'] = 0.5
     exp_settings['epochs'] = 1500
-    exp_settings['num_arms'] = 4
-    exp_settings['barcode_size'] = 4
-    exp_settings['num_barcodes'] = 4
+    exp_settings['num_arms'] = 10
+    exp_settings['barcode_size'] = 10
+    exp_settings['num_barcodes'] = 10
     exp_settings['pulls_per_episode'] = 10
     exp_settings['perfect_info'] = False
     exp_settings['reset_barcodes_per_epoch'] = False
     exp_settings['reset_arms_per_epoch'] = True
 
-    # LSTM Model Info
-    exp_settings['dim_hidden_lstm'] = 128
-    exp_settings['lstm_learning_rate'] = 5e-4
-    exp_settings['value_error_coef'] = 0.5
-    exp_settings['entropy_error_coef'] = 0.01
+# BayesOpt Best results so far
+# 10 arms/barcodes/pulls over 2k epochs
+# | Iter      | Avg_Ret     |A2C Dim    |LSTM Dim   |Ent Coef   |LSTM LR (10**val)     |Value Coef |
+# |  4        |  0.2878     |  364.4    |  125.5    |  0.1397   |  -2.8523236757589014 |  0.1981   |
 
-    # A2C Model Info
-    exp_settings['dim_hidden_a2c'] = 256
+# 4 arms/barcodes, 10 pulls, 1500 epochs
+# | Iter      | Avg_Ret     |A2C Dim    |LSTM Dim   |Ent Coef   |LSTM LR    |Value Coef |
+# |  10       |  0.5753     |  104.1    |  75.49    |  0.08517  |  0.000494 |  0.2141   |
+# |  21       |  0.592      |  404.8    |  124.4    |  0.07925  |  0.002947 |  0.2597   |
+# | ??        |  0.5864     |  2**7.687 |  256      |  0.092    | 10**-2.93 |  0.8      |
+# | ??        |  0.5947     |  2**7.672 |  2**7.598 |  0.0      | 10**-2.77 |  0.8      |
+
+    # Hyperparams in BayesOpt
+    exp_settings['dim_hidden_a2c'] = 364
+    exp_settings['dim_hidden_lstm'] = 125
+    exp_settings['entropy_error_coef'] = 0.1397
+    exp_settings['lstm_learning_rate'] = 10**-2.852
+    exp_settings['value_error_coef'] = 0.2
 
     # Embedder Model Info
     exp_settings['embedding_size'] = 512
@@ -512,25 +590,42 @@ if __name__  == '__main__':
 
     # Context in memory version
     logs, key_data = run_experiment_sl(exp_settings)
-    log_return, log_loss_value, log_loss_policy, log_embedder_accuracy, embedder_loss = logs
+    log_return, log_loss_value, log_loss_policy, log_loss_total, log_embedder_accuracy, embedder_loss = logs
     keys, prediction_mapping, epoch_mapping, barcode_data = key_data 
 
-    # # Did the embedder graph run out of memory? Copy paste the console to a txt file and salvage some results
-    # filename = 'C:\\Users\\joshc\\Google Drive\\CS Research\\Memory-Storage-Ritter\\dnd-lstm-sup-learning\\src\\cont_data.txt'
-    # log_return = []
-    # log_loss_value = []
-    # with open(filename, 'r') as file:
-    #     for line in file:
-    #         splits = line.split('|')
-    #         log_return.append(float(splits[1][-5:-1]))
-    #         loss = splits[2].split(',')
-    #         loc = loss[0].index('=')+2
-    #         loss_val = loss[0][loc:]
-    #         log_loss_value.append(float(loss_val))
-    # # file.close()
-    total_loss = log_loss_value + log_loss_policy
+    # # # Did the embedder graph run out of memory? Copy paste the console to a txt file and salvage some results
+    # # filename = 'C:\\Users\\joshc\\Google Drive\\CS Research\\Memory-Storage-Ritter\\dnd-lstm-sup-learning\\src\\cont_data.txt'
+    # # log_return = []
+    # # log_loss_value = []
+    # # with open(filename, 'r') as file:
+    # #     for line in file:
+    # #         splits = line.split('|')
+    # #         log_return.append(float(splits[1][-5:-1]))
+    # #         loss = splits[2].split(',')
+    # #         loc = loss[0].index('=')+2
+    # #         loss_val = loss[0][loc:]
+    # #         log_loss_value.append(float(loss_val))
+    # # # file.close()
     axes[0].plot(log_return, label=f'Ritter Returns')
-    axes[1].plot(total_loss, label=f'Ritter Total Loss')
+    import pandas as pd
+    smoothed_rewards = pd.Series.rolling(pd.Series(log_return), 10).mean()
+    smoothed_rewards = [elem for elem in smoothed_rewards]
+    axes[0].plot(smoothed_rewards, label=f'Ritter Returns Smoothed')
+
+    axes[1].plot(log_loss_total, label=f'Ritter Total Loss')
+    smoothed_loss = pd.Series.rolling(pd.Series(log_loss_total), 10).mean()
+    smoothed_loss = [elem for elem in smoothed_loss]
+    axes[1].plot(smoothed_loss, label=f'Ritter Total Loss Smoothed')
+
+    # Put generic ritter trend on graph for quick reference
+    if (exp_settings['num_arms'] == 10 and 
+        exp_settings['barcode_size'] == 10 and 
+        exp_settings['num_barcodes'] == 10 and 
+        exp_settings['pulls_per_episode'] == 10):
+        x = [0, 1000, 2000, 3000, 4000]
+        y = [0.2, 0.35, 0.6, 0.7, 0.75]
+        axes[0].plot(x,y, linestyle='dashed', label=f'Ritter Paper Returns')
+
     # axes[1].plot(log_loss_value,
     #                 label=f'Ritter Value Loss')
     # axes[1].plot(log_loss_policy,
@@ -571,6 +666,7 @@ if __name__  == '__main__':
     # exp_settings['mem_store'] = 'obs/context'
     # exp_settings['epochs'] = 20
     # exp_settings['dim_hidden_lstm'] = 32
+    # exp_settings['dim_hidden_a2c'] = 32
     # exp_settings['lstm_learning_rate'] = 5e-4
     # exp_settings['num_arms'] = 32           # Obs_Dim
     # exp_settings['barcode_size'] = 32       # Ctx_Dim
@@ -587,7 +683,8 @@ if __name__  == '__main__':
 
     # Graph Setup
     graph_title = f""" --- Returns and Loss ---
-    LSTM Hidden Dim: {exp_settings['dim_hidden_lstm']} | LSTM Learning Rate: {exp_settings['lstm_learning_rate']} 
+    LSTM Hidden Dim: {exp_settings['dim_hidden_lstm']} | A2C Hidden Dim: {exp_settings['dim_hidden_a2c']} | LSTM Learning Rate: {round(exp_settings['lstm_learning_rate'], 5)} 
+    Val Loss Coef: {exp_settings['value_error_coef']}| Entropy Loss Coef: | {exp_settings['entropy_error_coef']}
     Embedding Dim: {exp_settings['embedding_size']} | Embedder Learning Rate: {exp_settings['embedder_learning_rate']} 
     Epochs: {exp_settings['epochs']} | Unique Barcodes: {exp_settings['num_barcodes']} | Barcode Dim: {exp_settings['barcode_size']}
     Arms: {exp_settings['num_arms']} | Pulls per Trial: {exp_settings['pulls_per_episode']} | Perfect Arms: {exp_settings['perfect_info']}"""
@@ -649,6 +746,6 @@ if __name__  == '__main__':
 
     sns.despine()
     f.tight_layout()
-    f.subplots_adjust(top=0.8)
+    f.subplots_adjust(top=0.7)
     f.suptitle(graph_title)
     plt.show()

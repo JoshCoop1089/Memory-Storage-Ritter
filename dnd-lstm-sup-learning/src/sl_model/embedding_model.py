@@ -6,7 +6,7 @@ import torch.nn.functional as F
 
 class Embedder(nn.Module):
 
-    def __init__(self, exp_settings, bias=True):
+    def __init__(self, exp_settings, device, bias=True):
         super(Embedder, self).__init__()
         self.bias = bias
         self.exp_settings = exp_settings
@@ -15,11 +15,11 @@ class Embedder(nn.Module):
         self.num_barcodes = exp_settings['num_barcodes']
 
         # Basic Layers
-        self.h2m = nn.Linear(self.input_dim, 2*embedding_size, bias=bias)
+        self.h2m = nn.Linear(self.input_dim, 2*embedding_size, bias=bias, device = device)
         # self.mdrope = nn.Dropout(0.5)
         # self.m2e = nn.Linear(2*embedding_size, 1*embedding_size, bias=bias)
         self.edropc = nn.Dropout(0.5)
-        self.e2c = nn.Linear(2*embedding_size, self.num_barcodes, bias=bias)
+        self.e2c = nn.Linear(2*embedding_size, self.num_barcodes, bias=bias, device = device)
 
         # init
         self.reset_parameter()

@@ -79,7 +79,7 @@ class DND():
 
         if self.mem_store == 'embedding':
             # Embedding model
-            self.embedder = Embedder(self.exp_settings).to(self.device)
+            self.embedder = Embedder(self.exp_settings, device = self.device)
             learning_rate = exp_settings['embedder_learning_rate']
             self.embed_optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, self.embedder.parameters()), lr=learning_rate)
             self.embedder_loss = []
@@ -243,39 +243,25 @@ class DND():
             print(e)
             pass
 
-        # Optimization Try
-        # Only update embedder if last 10 epochs are below threshold accuracy levels?
-        episodes = np.count_nonzero(self.log_embedder_accuracy)
-        if  episodes > 10:
-            avg_acc = self.log_embedder_accuracy[episodes-10:episodes].mean()
-        elif episodes != 0:
-            avg_acc = self.log_embedder_accuracy[:episodes].mean()
-        else:
-            avg_acc = 0
-        # print("Embedder Accuracy: ", round(avg_acc, 4))
-       
-        if avg_acc < (1-1/self.exp_settings['num_barcodes']):
-            # Embedding Model Loss Backprop Time
-            agent = self.embedder
-            loss_vals = [trial_hidden_states[i][2] for i in range(len(trial_hidden_states))]
-            episode_loss = torch.stack(loss_vals).mean()
+        # Embedding Model Loss Backprop Time
+        agent = self.embedder
+        loss_vals = [trial_hidden_states[i][2] for i in range(len(trial_hidden_states))]
+        episode_loss = torch.stack(loss_vals).mean()
 
-            # Unfreeze Embedder to train
-            for name, param in agent.named_parameters():
-                # print(name, param.grad)
-                param.requires_grad = True
+        # Unfreeze Embedder to train
+        for name, param in agent.named_parameters():
+            # print(name, param.grad)
+            param.requires_grad = True
 
-            self.embedder_loss.append(episode_loss)
-            self.embed_optimizer.zero_grad()
-            episode_loss.backward(retain_graph=True)
-            self.embed_optimizer.step()
+        self.embedder_loss.append(episode_loss)
+        self.embed_optimizer.zero_grad()
+        episode_loss.backward(retain_graph=True)
+        self.embed_optimizer.step()
 
-            # Freeze Embedder model until next memory retrieval
-            for name, param in agent.named_parameters():
-                # print(name, param.grad)
-                param.requires_grad = False
-        else:
-            self.embedder_loss.append(torch.tensor(0, device=self.device))
+        # Freeze Embedder model until next memory retrieval
+        for name, param in agent.named_parameters():
+            # print(name, param.grad)
+            param.requires_grad = False
 
     def save_memory_non_embedder(self, memory_key, barcode_string, memory_val):
 
@@ -458,7 +444,10 @@ class DND():
             best_memory_val, best_memory_id = self._get_memory(similarities)
 
             # get the barcode for that memory
-            barcode = self.keys[best_memory_id][0][1][0]
+            try:
+                barcode = self.keys[best_memory_id][0][1][0]
+            except Exception:
+                barcode = ''
 
             # # Split the stored item to get the barcode if needed
             # if self.exp_settings['mem_store'] == 'obs/context':
@@ -534,7 +523,7 @@ def compute_similarities(query_key, key_list, metric):
 def _empty_memory(memory_dim, device):
     """Get a empty memory, assuming the memory is a row vector
     """
-    return torch.squeeze(torch.zeros(memory_dim, device=device).data)
+    return torch.squeeze(torch.zeros(memory_dim, device=device))
 
 def _empty_barcode(memory_dim):
     """Get a empty barcode, and pass it back as a string for comparison downstream

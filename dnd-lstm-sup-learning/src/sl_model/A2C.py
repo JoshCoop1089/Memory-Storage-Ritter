@@ -28,27 +28,20 @@ class A2C(nn.Module):
 
     """
 
-    def __init__(self, dim_input, dim_hidden, dim_output):
+    def __init__(self, dim_input, dim_hidden, dim_output, device):
         super(A2C, self).__init__()
         self.dim_input = dim_input
         self.dim_output = dim_output
 
-        # Make this changed from exp_settings?
-        self.dropout = 0.25
-
         # Smaller as you go further in?
         self.dim_hidden = dim_hidden
-        # self.dim_hidden = 2*(dim_input + dim_output) - 1
 
         # Actor/Policy Network
-        self.ih = nn.Linear(dim_input, self.dim_hidden)
-        # self.ih2 = nn.Linear(self.dim_hidden, self.dim_hidden)
-        self.actor = nn.Linear(self.dim_hidden, dim_output)
+        self.ih = nn.Linear(dim_input, self.dim_hidden, device = device)
+        self.actor = nn.Linear(self.dim_hidden, dim_output, device = device)
 
         # Critic/Value Network
-        # self.ih_c = nn.Linear(dim_input, self.dim_hidden)
-        # self.ih_c2 = nn.Linear(self.dim_hidden, self.dim_hidden)
-        self.critic = nn.Linear(self.dim_hidden, 1)
+        self.critic = nn.Linear(self.dim_hidden, 1, device = device)
         # ortho_init(self)
 
     def forward(self, x, beta=1):
@@ -72,24 +65,16 @@ class A2C(nn.Module):
         h = F.leaky_relu(self.ih(x))
 
         # Critic Network
-        # h_c = F.leaky_relu(self.ih_c(x))
-        # h_c = nn.Dropout(0.5)(h_c)
-        # h_c = F.leaky_relu(self.ih_c2(h_c))
-        # h_c = nn.Dropout(self.dropout)(h)
         value_estimate = self.critic(h)
 
         # Actor Network
-        # h = nn.Dropout(0.5)(h)
-        # h = F.leaky_relu(self.ih2(h))
-        # h = nn.Dropout(self.dropout)(h)
         action_distribution = softmax(self.actor(h), beta)
 
         # Entropy caluclation for exploration
         dist = torch.distributions.Categorical(action_distribution)
-        entropy = dist.entropy()
+        entropy = dist.entropy().mean()
 
         return action_distribution, value_estimate, entropy
-
 
 class A2C_linear(nn.Module):
     """a linear actor-critic network

@@ -65,28 +65,28 @@ def get_reward_from_assumed_barcode(a_t, assumed_barcode, mapping, device, perfe
     try:
         # print(a_t, assumed_barcode)
         # print(mapping)
-        best_arm = mapping[assumed_barcode]
+        best_arm = torch.tensor(mapping[assumed_barcode], device = device)
         # print(a_t.item(), best_arm)
         if perfect_info == False:
-            if a_t.item() == best_arm:
-                reward = int(np.random.random() < 0.9)
+            if torch.eq(a_t, best_arm):
+                reward = float(np.random.random() < 0.9)
             else:
-                reward = int(np.random.random() < 0.1)
+                reward = float(np.random.random() < 0.1)
 
         # Deterministic Arm Rewards (for debugging purposes)
         # Make sure to change generate_one_episode in ContextBandits.py as well
         else:  # perfect_info == True
-            reward = int(a_t.item() == best_arm)
+            reward = float(torch.eq(a_t, best_arm))
 
     # Penalize a predicted barcode which isn't a part of the mapping for the epoch
     except Exception as e:
         # print(e)
-        reward = 0
+        reward = 0.0
 
     # print("P-R:", reward, "R-R:", reward_from_obs)
-    return torch.tensor(reward).type(torch.FloatTensor).to(device)
+    return torch.tensor(reward, device=device)
 
-def compute_a2c_loss(probs, values, returns, entropies):
+def compute_a2c_loss(probs, values, returns, entropy):
     """compute the objective node for policy/value networks
 
     Parameters
@@ -106,19 +106,21 @@ def compute_a2c_loss(probs, values, returns, entropies):
     """
     policy_grads, value_losses = [], []
     for prob_t, v_t, R_t in zip(probs, values, returns):
+        # A_t = torch.sub(R_t,v_t)
         A_t = R_t - v_t.item()
+
         # print(A_t, R_t, v_t.item())
         policy_grads.append(-prob_t * A_t)
-        # value_losses.append(
-        #     mse_loss(torch.squeeze(v_t), torch.squeeze(R_t))
-        # )
         value_losses.append(
-            smooth_l1_loss(torch.squeeze(v_t), torch.squeeze(R_t))
+            mse_loss(torch.squeeze(v_t), torch.squeeze(R_t))
         )
-    # loss_policy = torch.stack(policy_grads).mean()
-    # loss_value = torch.stack(value_losses).mean()
-    # entropies = torch.stack(entropies).mean()
-    loss_policy = torch.stack(policy_grads).sum()
-    loss_value = torch.stack(value_losses).sum()
-    entropies = torch.stack(entropies).sum()
+        # value_losses.append(
+        #     smooth_l1_loss(torch.squeeze(v_t), torch.squeeze(R_t))
+        # )
+    loss_policy = torch.stack(policy_grads).mean()
+    loss_value = torch.stack(value_losses).mean()
+    entropies = torch.stack(entropy).mean()
+    # loss_policy = torch.stack(policy_grads).sum()
+    # loss_value = torch.stack(value_losses).sum()
+    # entropies = torch.stack(entropies).sum()
     return loss_policy, loss_value, entropies

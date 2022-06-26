@@ -15,7 +15,8 @@ def avg_returns(dim_hidden_lstm, lstm_learning_rate, dim_hidden_a2c, value_error
     # Experimental Parameters
     exp_settings = {}
     exp_settings['randomize'] = False
-    exp_settings['tensorboard_logging'] = False
+    exp_settings['tensorboard_logging'] = True
+    exp_settings['timing'] = False
 
     # Task Info
     exp_settings['kernel'] = 'cosine'           #cosine, l2
@@ -37,7 +38,7 @@ def avg_returns(dim_hidden_lstm, lstm_learning_rate, dim_hidden_a2c, value_error
 
     # HyperParam Searches for BayesOpt #
     # LSTM Model Info
-    exp_settings['dim_hidden_lstm'] = int(dim_hidden_lstm)
+    exp_settings['dim_hidden_lstm'] = int(2**dim_hidden_lstm)
     exp_settings['value_error_coef'] = value_error_coef
     exp_settings['entropy_error_coef'] = entropy_error_coef
 
@@ -45,7 +46,7 @@ def avg_returns(dim_hidden_lstm, lstm_learning_rate, dim_hidden_a2c, value_error
     exp_settings['lstm_learning_rate'] = 10**lstm_learning_rate
 
     # A2C Model Info
-    exp_settings['dim_hidden_a2c'] = int(dim_hidden_a2c)
+    exp_settings['dim_hidden_a2c'] = int(2**dim_hidden_a2c)
 
     # Embedder Model Info
     exp_settings['embedding_size'] = 512
@@ -62,11 +63,11 @@ def avg_returns(dim_hidden_lstm, lstm_learning_rate, dim_hidden_a2c, value_error
     return np.mean(log_return[final_q:])
 
 # Bounded region of parameter space
-pbounds = { 'dim_hidden_a2c': (64, 512),
-            'dim_hidden_lstm': (32, 256),
+pbounds = { 'dim_hidden_a2c': (5, 9),  #transformed into 2**5 -> 2**9 in function
+            'dim_hidden_lstm': (5, 9),  # transformed into 2**5 -> 2**9 in function
             'entropy_error_coef': (0, 0.25),
-            'lstm_learning_rate': (-5, -2), #transformed into 1e-6 -> 1e-2 in function
-            'value_error_coef': (0, 1)}
+            'lstm_learning_rate': (-5, -2), #transformed into 1e-5 -> 1e-2 in function
+            'value_error_coef': (0.2, 0.8)}
 
 # Best Results So Far 
 # (4 arms/barcodes, 10 pulls, 1500 epochs, last quarter returns, bounds_transformer off)
@@ -90,11 +91,6 @@ pbounds = { 'dim_hidden_a2c': (64, 512),
 # |  5        |  0.184      |  422.7    |  248.9    |  0.07836  |  0.006924 |  0.8764   |
 # |  6        |  0.1967     |  363.8    |  124.7    |  0.1183   |  0.003332 |  0.0559   |
 
-# My next long trials:
-# | Iter      | Avg_Ret     |A2C Dim    |LSTM Dim   |Ent Coef   |LSTM LR    |Value Coef |
-# |           |             | 103       | 75        | 0.08      | 5e-4      |0.4
-# |           |             | 400       | 120       | 0.08      | 2e-3      |0.25
-
 # Does this cause it to converge too quickly?
 # bounds_transformer = SequentialDomainReductionTransformer()
 
@@ -107,40 +103,61 @@ optimizer = BayesianOptimization(
 )
 
 # Suspend/Resume Function for longer iterations
-logger = JSONLogger(path="./logs.json")
+
+# 4 arms/barcodes, 10 pulls
+# load_logs(optimizer, logs=["./dnd-lstm-sup-learning/src/logs_4.json"])
+# logger = JSONLogger(path="./dnd-lstm-sup-learning/src/logs_4.json", reset=False)
+
+# 10 arms/barcodes/pulls
+load_logs(optimizer, logs=["./dnd-lstm-sup-learning/src/logs_10.json"])
+logger = JSONLogger(path="./dnd-lstm-sup-learning/src/logs_10.json", reset=False)
+
 optimizer.subscribe(Events.OPTIMIZATION_STEP, logger)
-# load_logs(optimizer, logs=["./logs.json"])
 print("New optimizer is now aware of {} points.".format(len(optimizer.space)))
 
-# Manual Point addition cause i forgot to set up the logger before running a long ass trial =(
-# 10 arms/barcodes/pulls over 2k epochs
-obs = [
-# | Iter      | Avg_Ret     |A2C Dim    |LSTM Dim   |Ent Coef   |LSTM LR    |Value Coef |
-"|  1        |  0.1869     |  250.8    |  193.4    |  2.859e-0 |  0.003024 |  0.1468   |",
-"|  2        |  0.187      |  105.4    |  73.72    |  0.08639  |  0.003968 |  0.5388   |",
-"|  3        |  0.1784     |  251.8    |  185.5    |  0.05111  |  0.008781 |  0.02739  |",
-"|  4        |  0.2878     |  364.4    |  125.5    |  0.1397   |  0.001405 |  0.1981   |",
-"|  5        |  0.184      |  422.7    |  248.9    |  0.07836  |  0.006924 |  0.8764   |",
-"|  6        |  0.1967     |  363.8    |  124.7    |  0.1183   |  0.003332 |  0.0559   |"
-]
+# # # Manual Point addition cause i forgot to set up the logger before running a long ass trial =(
+# # # 10 arms/barcodes/pulls over 2k epochs
+# obs = [
+# # | Iter      | Avg_Ret     |A2C Dim    |LSTM Dim   |Ent Coef   |LSTM LR    |Value Coef |
+# "|  1        |  0.1869     |  250.8    |  193.4    |  2.859e-0 |  -2.519418213170831 |  0.1468   |",
+# "|  2        |  0.187      |  105.4    |  73.72    |  0.08639  |  -2.401428336517859 |  0.5388   |",
+# "|  3        |  0.1784     |  251.8    |  185.5    |  0.05111  |  -2.0564560228465454 |  0.02739  |",
+# "|  4        |  0.2878     |  364.4    |  125.5    |  0.1397   |  -2.8523236757589014 |  0.1981   |",
+# "|  5        |  0.184      |  422.7    |  248.9    |  0.07836  |  -2.159642940796644 |  0.8764   |",
+# "|  6        |  0.1967     |  363.8    |  124.7    |  0.1183   |  -2.47729500726525 |  0.0559   |"
 
-for val in obs:
-    val_split = val.split('|')
-    tar = float(val_split[2])
-    params = [float(val_split[i]) for i in range(3,len(val_split)-1)]
-    # print(tar)
-    # print(params) 
-    optimizer.register(params, tar)
+# ]
 
-print("New optimizer is now aware of {} points.".format(len(optimizer.space)))
+# {"target": 0.1890480000000001, "params": {"dim_hidden_a2c": 360.28050479192956, "dim_hidden_lstm": 144.9514141076652, "entropy_error_coef": 0.06526811936609955, "lstm_learning_rate": -3.1330933661544993, "value_error_coef": 0.40681007049253626}, "datetime": {"datetime": "2022-06-23 07:23:34", "elapsed": 0.0, "delta": 0.0}}
+# {"target": 0.1869, "params": {"dim_hidden_a2c": 250.8, "dim_hidden_lstm": 193.4, "entropy_error_coef": 2.859, "lstm_learning_rate": -2.519418213170831, "value_error_coef": 0.1468}, "datetime": {"datetime": "2022-06-24 16:46:43", "elapsed": 0.0, "delta": 0.0}}
+# {"target": 0.187, "params": {"dim_hidden_a2c": 105.4, "dim_hidden_lstm": 73.72, "entropy_error_coef": 0.08639, "lstm_learning_rate": -2.401428336517859, "value_error_coef": 0.5388}, "datetime": {"datetime": "2022-06-24 16:46:43", "elapsed": 0.000998, "delta": 0.000998}}
+# {"target": 0.1784, "params": {"dim_hidden_a2c": 251.8, "dim_hidden_lstm": 185.5, "entropy_error_coef": 0.05111, "lstm_learning_rate": -2.0564560228465454, "value_error_coef": 0.02739}, "datetime": {"datetime": "2022-06-24 16:46:43", "elapsed": 0.000998, "delta": 0.0}}
+# {"target": 0.2878, "params": {"dim_hidden_a2c": 364.4, "dim_hidden_lstm": 125.5, "entropy_error_coef": 0.1397, "lstm_learning_rate": -2.8523236757589014, "value_error_coef": 0.1981}, "datetime": {"datetime": "2022-06-24 16:46:43", "elapsed": 0.001999, "delta": 0.001001}}
+# {"target": 0.184, "params": {"dim_hidden_a2c": 422.7, "dim_hidden_lstm": 248.9, "entropy_error_coef": 0.07836, "lstm_learning_rate": -2.159642940796644, "value_error_coef": 0.8764}, "datetime": {"datetime": "2022-06-24 16:46:43", "elapsed": 0.001999, "delta": 0.0}}
+# {"target": 0.1967, "params": {"dim_hidden_a2c": 363.8, "dim_hidden_lstm": 124.7, "entropy_error_coef": 0.1183, "lstm_learning_rate": -2.47729500726525, "value_error_coef": 0.0559}, "datetime": {"datetime": "2022-06-24 16:46:43", "elapsed": 0.002999, "delta": 0.001}}
+# {"target": 0.1785413333333334, "params": {"dim_hidden_a2c": 250.82585810675315, "dim_hidden_lstm": 193.35268653104342, "entropy_error_coef": 2.859370433622166e-05, "lstm_learning_rate": -4.0930022821044805, "value_error_coef": 0.14675589081711304}, "datetime": {"datetime": "2022-06-24 17:53:59", "elapsed": 4036.367885, "delta": 4036.364886}}
+# {"target": 0.1794506666666668, "params": {"dim_hidden_a2c": 105.36769045642141, "dim_hidden_lstm": 73.72228734859829, "entropy_error_coef": 0.08639018176076194, "lstm_learning_rate": -3.80969757730799, "value_error_coef": 0.538816734003357}, "datetime": {"datetime": "2022-06-24 18:53:09", "elapsed": 7586.800449, "delta": 3550.432564}}
+# {"target": 0.17880800000000013, "params": {"dim_hidden_a2c": 364.3694445599242, "dim_hidden_lstm": 125.47627573023644, "entropy_error_coef": 0.13967245711143791, "lstm_learning_rate": -4.578839184214298, "value_error_coef": 0.1981014890848788}, "datetime": {"datetime": "2022-06-25 00:58:52", "elapsed": 3690.115813, "delta": 3690.114795}}
+# {"target": 0.1900160000000001, "params": {"dim_hidden_a2c": 198.3545875221977, "dim_hidden_lstm": 134.69564927422536, "entropy_error_coef": 0.14653443867158242, "lstm_learning_rate": -2.770736961792505, "value_error_coef": 0.47419758533659195}, "datetime": {"datetime": "2022-06-25 02:00:11", "elapsed": 7368.79629, "delta": 3678.680477}}
+# {"target": 0.1881920000000001, "params": {"dim_hidden_a2c": 361.9867714168124, "dim_hidden_lstm": 125.75799619296069, "entropy_error_coef": 0.10399705748487956, "lstm_learning_rate": -2.4802976731528377, "value_error_coef": 0.9003656997697922}, "datetime": {"datetime": "2022-06-25 03:01:29", "elapsed": 11046.485084, "delta": 3677.688794}}
+# {"target": 0.1849786666666668, "params": {"dim_hidden_a2c": 238.03793802874452, "dim_hidden_lstm": 239.3684941387513, "entropy_error_coef": 0.21219179505158609, "lstm_learning_rate": -3.2403981549142262, "value_error_coef": 0.2193865132025623}, "datetime": {"datetime": "2022-06-25 04:25:12", "elapsed": 16070.044709, "delta": 5023.559625}}
+
+
+# for val in obs:
+#     val_split = val.split('|')
+#     tar = float(val_split[2])
+#     params = [float(val_split[i]) for i in range(3,len(val_split)-1)]
+#     optimizer.register(params, tar)
+
+# print("New optimizer is now aware of {} points.".format(len(optimizer.space)))
 
 optimizer.maximize(
-    init_points=2,
-    n_iter=8,
+    init_points=1,
+    n_iter=5,
 )
 
-# # for i, res in enumerate(optimizer.res):
-# #     print("Iteration {}: \n\t{}".format(i, res))
+# # # for i, res in enumerate(optimizer.res):
+# # #     print("Iteration {}: \n\t{}".format(i, res))
 
 print(" *-* "*5)    
 print(optimizer.max)

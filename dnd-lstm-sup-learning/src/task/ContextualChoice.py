@@ -40,8 +40,8 @@ class ContextualChoice():
         [observation_p2, target_p2, context_p2] = _permute_array_list(
             [observation_p1, target_p1, context_p1])
         # concat observation and context
-        observation_context_p1 = np.dstack([observation_p1, context_p1])
-        observation_context_p2 = np.dstack([observation_p2, context_p2])
+        observation_context_p1 = np.dstack([observation_p1, context_p1, target_p1])
+        observation_context_p2 = np.dstack([observation_p2, context_p2, target_p2])
         # combine the two phases
         X = np.vstack([observation_context_p1, observation_context_p2])
         Y = np.vstack([target_p1, target_p2])

@@ -4,6 +4,7 @@ Ritter, et al. (2018).
 Been There, Done That: Meta-Learning with Episodic Recall.
 Proceedings of the International Conference on Machine Learning (ICML).
 """
+import time
 import torch
 import torch.nn as nn
 from sl_model.DND import DND
@@ -26,14 +27,14 @@ class DNDLSTM(nn.Module):
         self.exp_settings = exp_settings
         # input-hidden weights
         self.i2h = nn.Linear(dim_input_lstm, (N_GATES+1)
-                             * dim_hidden_lstm, bias=bias).to(self.device)
+                             * dim_hidden_lstm, bias=bias, device = self.device)
         # hidden-hidden weights
-        self.h2h = nn.Linear(dim_hidden_lstm, (N_GATES+1) * dim_hidden_lstm, bias=bias).to(self.device)
+        self.h2h = nn.Linear(dim_hidden_lstm, (N_GATES+1) * dim_hidden_lstm, bias=bias, device = self.device)
         # dnd
         self.dnd = DND(dict_len, dim_hidden_lstm, exp_settings, self.device)
         #policy
         # self.a2c = A2C_linear(dim_hidden_lstm, dim_output_lstm).to(self.device)
-        self.a2c = A2C(dim_hidden_lstm, self.dim_hidden_a2c, dim_output_lstm).to(self.device)
+        self.a2c = A2C(dim_hidden_lstm, self.dim_hidden_a2c, dim_output_lstm, device = self.device)
 
         # For some reason, if this is activated, the Embedder never learns, even though the embedder layers arent touched by this
         # init
@@ -48,6 +49,8 @@ class DNDLSTM(nn.Module):
                 torch.nn.init.constant_(wts, 0)
 
     def forward(self, observation_barcode_reward, barcode_string, h, c):
+
+        forward_start = time.perf_counter()
         # unpack activity
         h = h.view(h.size(1), -1)
         c = c.view(c.size(1), -1)
@@ -79,10 +82,13 @@ class DNDLSTM(nn.Module):
             else:
                 raise ValueError('Incorrect mem_store type')
 
+        forward_prep = time.perf_counter() - forward_start
+
         # transform the input info
         Wx = self.i2h(x_t)
         Wh = self.h2h(h)
         preact = Wx + Wh
+        forward_preact = time.perf_counter() - forward_prep - forward_start
         # get all gate values
         gates = preact[:, : N_GATES * self.dim_hidden_lstm].sigmoid()
         # split input(write) gate, forget gate, output(read) gate
@@ -94,6 +100,8 @@ class DNDLSTM(nn.Module):
         c_t_new = preact[:, N_GATES * self.dim_hidden_lstm:].tanh()
         # new cell state = gated(prev_c) + gated(new_stuff)
         c_t = torch.mul(f_t, c) + torch.mul(i_t, c_t_new)
+
+        forward_gate = time.perf_counter() - forward_prep - forward_preact - forward_start
 
         if self.exp_settings['mem_store'] == 'embedding':
             # Freeze all LSTM Layers before getting memory
@@ -125,11 +133,13 @@ class DNDLSTM(nn.Module):
             m_t = mem.tanh()
             # print("A:", self.a2c.critic.weight.data, self.a2c.critic.weight.grad)
 
+        forward_get_mem = time.perf_counter() - forward_prep - forward_preact - forward_gate - forward_start
+
         # gate the memory; in general, can be any transformation of it
         c_t = c_t + torch.mul(r_t, m_t)
         # get gated hidden state from the cell state
         h_t = torch.mul(o_t, c_t.tanh())
-
+        forward_save = 0
         if not self.dnd.encoding_off:
             if self.exp_settings['mem_store'] == 'embedding':
                 # Freeze all LSTM Layers before getting memory
@@ -148,7 +158,8 @@ class DNDLSTM(nn.Module):
                         param.requires_grad = True 
             else:
                 self.dnd.save_memory_non_embedder(q_t, barcode_string, c_t)
-
+            forward_save = time.perf_counter() - forward_get_mem - forward_prep - \
+                forward_preact - forward_gate - forward_start
         # policy
         pi_a_t, v_t, entropy = self.a2c.forward(h_t)
         # pick an action
@@ -156,9 +167,15 @@ class DNDLSTM(nn.Module):
         # reshape data
         h_t = h_t.view(1, h_t.size(0), -1)
         c_t = c_t.view(1, c_t.size(0), -1)
+        forward_action = time.perf_counter() - forward_save - forward_get_mem - forward_prep - \
+            forward_preact - forward_gate - forward_start
+        timings = { "1a. Prep": forward_prep, "1b. PreAct": forward_preact, "1c. Gate": forward_gate,
+                     "1d. Get_mem": forward_get_mem, "1e. Save_mem": forward_save, "1f. Action": forward_action}
+        
         # fetch activity
         output = (a_t, predicted_barcode, prob_a_t, v_t, entropy, h_t, c_t)
-        cache = (f_t, i_t, o_t, r_t, m_t)
+        cache = (f_t, i_t, o_t, r_t, m_t, timings)
+
         return output, cache
 
     def pick_action(self, action_distribution):
