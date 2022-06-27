@@ -10,6 +10,7 @@ import torch
 import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
+import pandas as pd
 from torch.utils.tensorboard import SummaryWriter
 import torch.optim.lr_scheduler as LRScheduler
 
@@ -136,7 +137,7 @@ def run_experiment_sl(exp_settings):
     '''train'''
     run_time = np.zeros(n_epochs,)
     task_cumulative, pull_cumulative, episode_cumulative = 0,0,0
-    pull_timings = {}
+    pull_timings, episode_timings = {}, {}
     log_return = np.zeros(n_epochs,)
     agent.dnd.log_embedder_accuracy = np.zeros(n_epochs,)
     log_loss_value = np.zeros(n_epochs,)
@@ -146,7 +147,7 @@ def run_experiment_sl(exp_settings):
     log_Y_hat = np.zeros((n_epochs, episodes_per_epoch, pulls_per_episode))
 
     barcode_data = [[[]]]
-    print("\n", "-*-_-*-"*3, "\n")
+    print("\n", "-*-_-*- "*3, "\n")
     # loop over epoch
     for i in range(n_epochs):
         time_start = time.perf_counter()
@@ -263,9 +264,12 @@ def run_experiment_sl(exp_settings):
                     if not param.requires_grad:
                         print(name)
 
+            episode_overhead_start = time.perf_counter()
             returns = compute_returns(rewards, device, gamma = 0.0)
             loss_policy, loss_value, entropies_tensor = compute_a2c_loss(probs, values, returns, entropies)
             loss = loss_policy + value_weight*loss_value - entropy_weight*entropies_tensor
+
+            loss_time = time.perf_counter() - episode_overhead_start
 
             # Testing for gradient leaks between embedder model and lstm model
             # print("B-End_of_Ep:\n", agent.a2c.critic.weight.grad)
@@ -276,6 +280,8 @@ def run_experiment_sl(exp_settings):
             optimizer.step()
             # print("A-End_of_Ep:\n", agent.a2c.critic.weight.grad)
             # print("A-End_of_Ep:\n", agent.dnd.embedder.e2c.weight.grad)
+
+            backprop_time = time.perf_counter() - episode_overhead_start - loss_time
 
             # log
             # if exp_settings['task_version'] == 'bandit':
@@ -293,11 +299,16 @@ def run_experiment_sl(exp_settings):
             log_loss_value[i] += torch.div(loss_value, episodes_per_epoch)
             log_loss_policy[i] += torch.div(loss_policy, episodes_per_epoch)
             log_loss_total[i] += torch.div(loss, episodes_per_epoch)
+
+            logging_time = time.perf_counter() - episode_overhead_start - loss_time - backprop_time
+            ep_timings = {"2b1. Loss": loss_time, "2b2. Backprop": backprop_time, "2b3. Logging": logging_time}
         
             # # Learning Rate Scheduler
             # scheduler.step()
 
             if exp_settings['timing']:
+                for k,v in ep_timings.items():
+                    episode_timings[k] = episode_timings.get(k,0) + v
                 episode_cumulative += (time.perf_counter() - episode_start)
 
         # print out some stuff
@@ -381,6 +392,8 @@ def run_experiment_sl(exp_settings):
                 pull_timings[k]/=tot_epis
             else:
                 pull_timings[k]/=tot_pulls
+        for k in episode_timings:
+            episode_timings[k]/=tot_epis
         epoch = np.mean(run_time)
         epi = episode_cumulative/(tot_epis)
         pull = pull_cumulative/(tot_pulls)
@@ -393,16 +406,23 @@ def run_experiment_sl(exp_settings):
                         "3. Epoch Actual": (epoch, 100*epoch/epoch),
                         "3a. Epoch Predicted": (epi*episodes_per_epoch, 100*epi*episodes_per_epoch/epoch),
                         "3b. Epoch Overhead": (epoch - epi*episodes_per_epoch, 100*(epoch - epi*episodes_per_epoch)/epoch),
-                        "4. Task Init Actual": (task_init, 100*task_init/task_init),
+                        "3b1. Task Init Actual": (task_init, 100*task_init/epoch),
                     }
+
+        # Percent of total time per task
         for k,v in pull_timings.items():
             pull_timings[k] = [v]
             pull_timings[k].append(100*v/pull)
+        for k,v in episode_timings.items():
+            episode_timings[k] = [v]
+            episode_timings[k].append(100*v/epi)
         
-        time_outs = time_outs | pull_timings
-
-        time_out = {key:(round(time_outs[key][0], 5), round(time_outs[key][1], 1)) for key in time_outs}
-        pprint.pprint(time_out)
+        # Merge all the dictionaries
+        time_out = time_outs | pull_timings | episode_timings
+        time_out = {key:(round(time_out[key][0], 5), round(time_out[key][1], 1)) for key in time_out}
+        timing_df = pd.DataFrame.from_dict(time_out, orient='index', columns = ['Avg Time (s)', 'Percent of Total'])
+        print(timing_df)
+        # pprint.pprint(time_out)
     print("- - - "*3)
 
     if exp_settings['tensorboard_logging']:
@@ -552,7 +572,7 @@ if __name__  == '__main__':
     exp_settings['mem_store'] = 'context'   #obs/context, context, embedding, obs, hidden (unsure how to do obs, hidden return calc w/o barcode predictions)
     exp_settings['task_version'] = 'bandit'      #bandit, original
     exp_settings['noise_percent'] = 0.5
-    exp_settings['epochs'] = 1500
+    exp_settings['epochs'] = 3000
     exp_settings['num_arms'] = 10
     exp_settings['barcode_size'] = 10
     exp_settings['num_barcodes'] = 10
@@ -607,7 +627,6 @@ if __name__  == '__main__':
     # #         log_loss_value.append(float(loss_val))
     # # # file.close()
     axes[0].plot(log_return, label=f'Ritter Returns')
-    import pandas as pd
     smoothed_rewards = pd.Series.rolling(pd.Series(log_return), 10).mean()
     smoothed_rewards = [elem for elem in smoothed_rewards]
     axes[0].plot(smoothed_rewards, label=f'Ritter Returns Smoothed')

@@ -89,6 +89,7 @@ class DNDLSTM(nn.Module):
         Wh = self.h2h(h)
         preact = Wx + Wh
         forward_preact = time.perf_counter() - forward_prep - forward_start
+
         # get all gate values
         gates = preact[:, : N_GATES * self.dim_hidden_lstm].sigmoid()
         # split input(write) gate, forget gate, output(read) gate
@@ -139,6 +140,7 @@ class DNDLSTM(nn.Module):
         c_t = c_t + torch.mul(r_t, m_t)
         # get gated hidden state from the cell state
         h_t = torch.mul(o_t, c_t.tanh())
+
         forward_save = 0
         if not self.dnd.encoding_off:
             if self.exp_settings['mem_store'] == 'embedding':
@@ -160,6 +162,7 @@ class DNDLSTM(nn.Module):
                 self.dnd.save_memory_non_embedder(q_t, barcode_string, c_t)
             forward_save = time.perf_counter() - forward_get_mem - forward_prep - \
                 forward_preact - forward_gate - forward_start
+
         # policy
         pi_a_t, v_t, entropy = self.a2c.forward(h_t)
         # pick an action
@@ -167,6 +170,7 @@ class DNDLSTM(nn.Module):
         # reshape data
         h_t = h_t.view(1, h_t.size(0), -1)
         c_t = c_t.view(1, c_t.size(0), -1)
+
         forward_action = time.perf_counter() - forward_save - forward_get_mem - forward_prep - \
             forward_preact - forward_gate - forward_start
         timings = { "1a. Prep": forward_prep, "1b. PreAct": forward_preact, "1c. Gate": forward_gate,

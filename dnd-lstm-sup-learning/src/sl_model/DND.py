@@ -288,19 +288,18 @@ class DND():
         # # Only context is stored in memory (Ritter Version)
         elif self.exp_settings['mem_store'] == 'context':
             try:
-                key_list = [self.keys[x][0] for x in range(len(self.keys))]
+                key_barcodes = [self.keys[x][0][1] for x in range(len(self.keys))]
+                if barcode_string in key_barcodes:
+                    best_memory_id = key_barcodes.index(barcode_string)
+                    self.vals[best_memory_id] = torch.squeeze(memory_val.data)
+                else:                    
+                    self.keys.append([(torch.squeeze(memory_key.data), barcode_string)])
+                    self.vals.append(torch.squeeze(memory_val.data))
+
+                # key_list = [self.keys[x][0][0] for x in range(len(self.keys))]
                 # # print("Keys:", key_list)
                 # similarities = compute_similarities(
                 #     memory_key, key_list, self.kernel)
-
-                # # # remove data dependant control flow
-                # # new_key = [[torch.squeeze(memory_key.data)]]
-                # # new_key.extend(self.keys)
-                # # self.keys = new_key
-
-                # # new_val = [torch.squeeze(memory_val.data)]
-                # # new_val.extend(self.vals)
-                # # self.vals = new_val
 
                 # prev_seen_task = torch.gt(torch.max(similarities), 0.9).item()
                 # if prev_seen_task:
@@ -309,25 +308,15 @@ class DND():
                 #     _, best_memory_id = self._get_memory(similarities)
                 #     self.vals[best_memory_id] = torch.squeeze(memory_val.data)
                 # else:
-                    # print("New Key Main Branch:", memory_key.data)
-                self.keys.append([(torch.squeeze(memory_key.data), barcode_string)])
-                self.vals.append(torch.squeeze(memory_val.data))
+                #     # print("New Key Main Branch:", memory_key.data)
+                #     self.keys.append([(torch.squeeze(memory_key.data), barcode_string)])
+                #     self.vals.append(torch.squeeze(memory_val.data))
 
             except IndexError:
                 self.keys.pop(0)
-                # # print("New Key Exception Branch:", memory_key.data)
-                # new_key = [[torch.squeeze(memory_key.data)]]
-                # new_key.extend(self.keys)
-                # self.keys = new_key
-
-                # new_val = [torch.squeeze(memory_val.data)]
-                # new_val.extend(self.vals)
-                # self.vals = new_val
+                # print("New Key Exception Branch:", memory_key.data)
                 self.keys.append([(torch.squeeze(memory_key.data), barcode_string)])
                 self.vals.append(torch.squeeze(memory_val.data))
-        # if torch.eq(torch.sum(self.keys[-1][0]),0):
-        #     self.keys.pop(-1)
-        #     self.vals.pop(-1)
 
         # remove the oldest memory, if overflow
         if len(self.keys) > self.dict_len:
@@ -478,9 +467,10 @@ class DND():
         best_memory_val = None
         if policy == '1NN':
             # print("Sims:" , similarities)
-            # reverse the similarities list to capture most recent memory
-            rev_sims = torch.flip(similarities.view(1, similarities.size(0)), dims = (0, 1))
-            best_memory_id = rev_sims.shape[1] - 1 - torch.argmax(rev_sims)
+            # # reverse the similarities list to capture most recent memory
+            # rev_sims = torch.flip(similarities.view(1, similarities.size(0)), dims = (0, 1))
+            # best_memory_id = rev_sims.shape[1] - 1 - torch.argmax(rev_sims)
+            best_memory_id = torch.argmax(similarities)
             best_memory_val = self.vals[best_memory_id]
         else:
             raise ValueError(f'unrecog recall policy: {policy}')
@@ -525,7 +515,9 @@ def _empty_memory(memory_dim, device):
     """
     return torch.squeeze(torch.zeros(memory_dim, device=device))
 
-def _empty_barcode(memory_dim):
+def _empty_barcode(barcode_size):
     """Get a empty barcode, and pass it back as a string for comparison downstream
     """
-    return np.array2string(np.zeros(memory_dim))[1:-1].replace(" ", "").replace(".", "")
+    empty_bc = "0"*barcode_size
+    return empty_bc
+    # return np.array2string(np.zeros(barcode_size))[1:-1].replace(" ", "").replace(".", "")

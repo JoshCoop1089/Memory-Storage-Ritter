@@ -92,14 +92,20 @@
 #             v['dim_hidden_a2c'] = math.log2(v['dim_hidden_a2c'])
 #             v['dim_hidden_lstm'] = math.log2(v['dim_hidden_lstm'])
 # pprint.pprint(a)
-a = {'a':1, 'b':2}
-c = {}
-print(c)
-for k,v in a.items():
-    c[k] = c.get(k,0) + a[k]
-print(c)
-b = {'a':2, 'b':4}
-for k,v in b.items():
-    c[k] = c[k] + b[k]
-print(c)
+# a = {'a':1, 'b':2}
+# c = {}
+# print(c)
+# for k,v in a.items():
+#     c[k] = c.get(k,0) + a[k]
+# print(c)
+# b = {'a':2, 'b':4}
+# for k,v in b.items():
+#     c[k] = c[k] + b[k]
+# print(c)
+
+from operator import index
+import pandas as pd
+a = {"a":(1,2), "b":(2,3), "c":(3,4)}
+df = pd.DataFrame.from_dict(a, orient = 'index')
+print(df)
 

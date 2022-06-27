@@ -67,7 +67,7 @@ pbounds = { 'dim_hidden_a2c': (5, 9),  #transformed into 2**5 -> 2**9 in functio
             'dim_hidden_lstm': (5, 9),  # transformed into 2**5 -> 2**9 in function
             'entropy_error_coef': (0, 0.25),
             'lstm_learning_rate': (-5, -2), #transformed into 1e-5 -> 1e-2 in function
-            'value_error_coef': (0.2, 0.8)}
+            'value_error_coef': (0, 0.75)}
 
 # Best Results So Far 
 # (4 arms/barcodes, 10 pulls, 1500 epochs, last quarter returns, bounds_transformer off)
@@ -153,7 +153,7 @@ print("New optimizer is now aware of {} points.".format(len(optimizer.space)))
 
 optimizer.maximize(
     init_points=1,
-    n_iter=5,
+    n_iter=7,
 )
 
 # # # for i, res in enumerate(optimizer.res):
