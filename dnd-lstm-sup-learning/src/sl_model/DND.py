@@ -1,12 +1,11 @@
-# from hashlib import new
-from operator import index
+# # from hashlib import new
+# from operator import index
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.cuda.amp as AMP
-
+from scipy import stats as st
 from sl_model.embedding_model import Embedder
-
 
 import numpy as np
 
@@ -51,7 +50,6 @@ class DND():
         self.hidden_lstm_dim = hidden_lstm_dim
         self.mapping = {}
         self.device = device
-        self.log_embedder_accuracy = ()
 
         # dynamic state
         self.encoding_off = False
@@ -73,6 +71,8 @@ class DND():
 
         # Experimental changes
         self.exp_settings = exp_settings
+        self.epoch_counter = 0
+        self.embedder_loss = np.zeros((exp_settings['epochs']))
 
         # allocate space for per trial hidden state buffer
         self.trial_buffer = [()]
@@ -82,7 +82,6 @@ class DND():
             self.embedder = Embedder(self.exp_settings, device = self.device)
             learning_rate = exp_settings['embedder_learning_rate']
             self.embed_optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, self.embedder.parameters()), lr=learning_rate)
-            self.embedder_loss = []
 
         # allocate space for memories
         self.reset_memory()
@@ -139,9 +138,8 @@ class DND():
         # # Reached end of episode, different ways to update memory
         # mem_update_boolean = self.exp_settings['kaiser_key_update']
 
-        keys = self.trial_buffer
-
         # Save full buffer per trial
+        keys = self.trial_buffer
         trial_hidden_states = [keys[i] for i in range(len(keys)) if keys[i] != ()]
         # print(trial_hidden_states)
 
@@ -235,10 +233,19 @@ class DND():
 
         try:
             # Trial buffer contained embedding,location from get_memory
-            for embedding, context_location, _ in trial_hidden_states:
+            context_net = np.zeros(self.exp_settings['pulls_per_episode'])
+            for idx, (embedding, context_location, _) in enumerate(trial_hidden_states):
+                context_net[idx] = context_location
+
+                # Store embeddings in slot predicted by barcode
                 old_emb = self.keys[context_location]
                 self.keys[context_location] = [torch.squeeze(embedding.data)] + old_emb
-                self.vals[context_location] = torch.squeeze(memory_val.data)
+            
+            # Find most often predicted barcode for trial and store LSTM state in that slot
+            # There should ideally only be one prediction if embedder is perfect
+            context_avg = int(st.mode(context_net)[0][0])
+            self.vals[context_avg] = torch.squeeze(memory_val.data)
+
         except Exception as e:
             print(e)
             pass
@@ -247,18 +254,18 @@ class DND():
         agent = self.embedder
         loss_vals = [trial_hidden_states[i][2] for i in range(len(trial_hidden_states))]
         episode_loss = torch.stack(loss_vals).mean()
+        self.embedder_loss[self.epoch_counter] += (episode_loss/self.exp_settings['episodes_per_epoch'])
 
         # Unfreeze Embedder to train
         for name, param in agent.named_parameters():
             # print(name, param.grad)
             param.requires_grad = True
 
-        self.embedder_loss.append(episode_loss)
         self.embed_optimizer.zero_grad()
         episode_loss.backward(retain_graph=True)
         self.embed_optimizer.step()
 
-        # Freeze Embedder model until next memory retrieval
+        # Freeze Embedder until next memory retrieval
         for name, param in agent.named_parameters():
             # print(name, param.grad)
             param.requires_grad = False
@@ -285,17 +292,22 @@ class DND():
                 self.vals.pop(0)
             return
 
-        # # Only context is stored in memory (Ritter Version)
+        # Only context is stored in memory (Ritter Version)
         elif self.exp_settings['mem_store'] == 'context':
             try:
                 key_barcodes = [self.keys[x][0][1] for x in range(len(self.keys))]
-                if barcode_string in key_barcodes:
+
+                # Is the barcode already in memory?
+                try:
                     best_memory_id = key_barcodes.index(barcode_string)
                     self.vals[best_memory_id] = torch.squeeze(memory_val.data)
-                else:                    
+
+                # Barcode not in memory, store new memory
+                except Exception:                    
                     self.keys.append([(torch.squeeze(memory_key.data), barcode_string)])
                     self.vals.append(torch.squeeze(memory_val.data))
 
+                # Dont have to use tensor stored because now we have barcode strings
                 # key_list = [self.keys[x][0][0] for x in range(len(self.keys))]
                 # # print("Keys:", key_list)
                 # similarities = compute_similarities(
@@ -312,6 +324,7 @@ class DND():
                 #     self.keys.append([(torch.squeeze(memory_key.data), barcode_string)])
                 #     self.vals.append(torch.squeeze(memory_val.data))
 
+            # It's the first episode of the epoch and I'm abusing try/except
             except IndexError:
                 self.keys.pop(0)
                 # print("New Key Exception Branch:", memory_key.data)
@@ -355,8 +368,8 @@ class DND():
 
         # treat model as predicting a single id for a class label, based on the order in self.sorted_key_list
 
-        # Calc Loss for single pull for updates at end of trial
-        criterion = nn.CrossEntropyLoss()
+        # Calc Loss for single pull for updates at end of episode
+        criterion = nn.CrossEntropyLoss().to(self.device)
         emb_loss = criterion(model_output, real_label_id)
 
         # Freeze Embedder model until next memory retrieval
@@ -392,8 +405,8 @@ class DND():
             context_location = self.key_context_map[predicted_context]
             best_memory_val = self.vals[context_location]
 
-            # Task was ID'd in this trial already, but there hasn't been an LSTM stored for it yet
-            if type(best_memory_val) == int:
+            # Task was ID'd in this epoch already, but there hasn't been an LSTM stored for it yet
+            if type(best_memory_val) is int:
                 best_memory_val = _empty_memory(self.hidden_lstm_dim, device = self.device)
 
         # Store embedding and predicted class label memory index in trial_buffer
@@ -443,8 +456,6 @@ class DND():
             #     barcode = key_stored[self.exp_settings['barcode_size']:]
             # else:
             #     barcode = key_stored
-
-            # barcode = np.array2string(barcode.cpu().numpy())[1:-1].replace(" ", "").replace(".", "")
             return best_memory_val, barcode
 
     def _get_memory(self, similarities, policy='1NN'):
@@ -520,4 +531,3 @@ def _empty_barcode(barcode_size):
     """
     empty_bc = "0"*barcode_size
     return empty_bc
-    # return np.array2string(np.zeros(barcode_size))[1:-1].replace(" ", "").replace(".", "")

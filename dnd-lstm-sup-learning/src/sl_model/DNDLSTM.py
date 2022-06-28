@@ -57,6 +57,7 @@ class DNDLSTM(nn.Module):
         obs_bar_reward = observation_barcode_reward.view(observation_barcode_reward.size(1), -1)
 
         # Form the inputs nicely
+        # Inputs are [obs, context, reward] when they come in
         observation = obs_bar_reward[0][:self.exp_settings['num_arms']].view(1, self.exp_settings['num_arms'])
         context = obs_bar_reward[0][self.exp_settings['num_arms']:-1].view(
             1, self.exp_settings['barcode_size'])
@@ -81,14 +82,17 @@ class DNDLSTM(nn.Module):
                 q_t = obs_bar_reward
             else:
                 raise ValueError('Incorrect mem_store type')
-
-        forward_prep = time.perf_counter() - forward_start
+        
+        if self.exp_settings['timing']:
+            forward_prep = time.perf_counter() - forward_start
 
         # transform the input info
         Wx = self.i2h(x_t)
         Wh = self.h2h(h)
         preact = Wx + Wh
-        forward_preact = time.perf_counter() - forward_prep - forward_start
+
+        if self.exp_settings['timing']:
+            forward_preact = time.perf_counter() - forward_prep - forward_start
 
         # get all gate values
         gates = preact[:, : N_GATES * self.dim_hidden_lstm].sigmoid()
@@ -101,13 +105,14 @@ class DNDLSTM(nn.Module):
         c_t_new = preact[:, N_GATES * self.dim_hidden_lstm:].tanh()
         # new cell state = gated(prev_c) + gated(new_stuff)
         c_t = torch.mul(f_t, c) + torch.mul(i_t, c_t_new)
-
-        forward_gate = time.perf_counter() - forward_prep - forward_preact - forward_start
+        
+        if self.exp_settings['timing']:
+            forward_gate = time.perf_counter() - forward_prep - forward_preact - forward_start
 
         if self.exp_settings['mem_store'] == 'embedding':
             # Freeze all LSTM Layers before getting memory
-            layers_before = [self.i2h, self.h2h, self.a2c]
-            for layer in layers_before:
+            layers = [self.i2h, self.h2h, self.a2c]
+            for layer in layers:
                 for name, param in layer.named_parameters():
                     param.requires_grad = False 
                 # print(name, param.data, param.grad)
@@ -119,9 +124,8 @@ class DNDLSTM(nn.Module):
             mem, predicted_barcode = self.dnd.get_memory(h, barcode_string)
             m_t = mem.tanh()
 
-            layers_after = [self.i2h, self.h2h, self.a2c]
             # Unfreeze LSTM
-            for layer in layers_after:
+            for layer in layers:
                 for name, param in layer.named_parameters():
                     param.requires_grad = True 
                 # print(name, param.data)
@@ -133,8 +137,9 @@ class DNDLSTM(nn.Module):
             mem, predicted_barcode = self.dnd.get_memory_non_embedder(q_t)
             m_t = mem.tanh()
             # print("A:", self.a2c.critic.weight.data, self.a2c.critic.weight.grad)
-
-        forward_get_mem = time.perf_counter() - forward_prep - forward_preact - forward_gate - forward_start
+        
+        if self.exp_settings['timing']:
+            forward_get_mem = time.perf_counter() - forward_prep - forward_preact - forward_gate - forward_start
 
         # gate the memory; in general, can be any transformation of it
         c_t = c_t + torch.mul(r_t, m_t)
@@ -160,8 +165,10 @@ class DNDLSTM(nn.Module):
                         param.requires_grad = True 
             else:
                 self.dnd.save_memory_non_embedder(q_t, barcode_string, c_t)
-            forward_save = time.perf_counter() - forward_get_mem - forward_prep - \
-                forward_preact - forward_gate - forward_start
+
+            if self.exp_settings['timing']:
+                forward_save = time.perf_counter() - forward_get_mem - forward_prep - \
+                    forward_preact - forward_gate - forward_start
 
         # policy
         pi_a_t, v_t, entropy = self.a2c.forward(h_t)
@@ -171,10 +178,12 @@ class DNDLSTM(nn.Module):
         h_t = h_t.view(1, h_t.size(0), -1)
         c_t = c_t.view(1, c_t.size(0), -1)
 
-        forward_action = time.perf_counter() - forward_save - forward_get_mem - forward_prep - \
-            forward_preact - forward_gate - forward_start
-        timings = { "1a. Prep": forward_prep, "1b. PreAct": forward_preact, "1c. Gate": forward_gate,
-                     "1d. Get_mem": forward_get_mem, "1e. Save_mem": forward_save, "1f. Action": forward_action}
+        timings = {}
+        if self.exp_settings['timing']:
+            forward_action = time.perf_counter() - forward_save - forward_get_mem - forward_prep - \
+                forward_preact - forward_gate - forward_start
+            timings = { "1a. Prep": forward_prep, "1b. PreAct": forward_preact, "1c. Gate": forward_gate,
+                        "1d. Get_mem": forward_get_mem, "1e. Action": forward_action, "1f. Save_mem (% per episode)": forward_save}
         
         # fetch activity
         output = (a_t, predicted_barcode, prob_a_t, v_t, entropy, h_t, c_t)

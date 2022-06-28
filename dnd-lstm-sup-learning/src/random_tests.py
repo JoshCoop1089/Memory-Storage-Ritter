@@ -109,3 +109,5 @@ a = {"a":(1,2), "b":(2,3), "c":(3,4)}
 df = pd.DataFrame.from_dict(a, orient = 'index')
 print(df)
 
+print(round(4.5), round(4.49), round(4.501))
+

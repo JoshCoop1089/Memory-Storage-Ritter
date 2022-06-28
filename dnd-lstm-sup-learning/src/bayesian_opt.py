@@ -6,11 +6,10 @@ from bayes_opt.logger import JSONLogger
 from bayes_opt.event import Events
 from bayes_opt.util import load_logs
 
-
 import numpy as np
 
 
-def avg_returns(dim_hidden_lstm, lstm_learning_rate, dim_hidden_a2c, value_error_coef, entropy_error_coef):
+def avg_returns(dim_hidden_lstm = 0, lstm_learning_rate = 0, dim_hidden_a2c = 0, value_error_coef = 0, entropy_error_coef = 0):
 
     # Experimental Parameters
     exp_settings = {}
@@ -27,7 +26,7 @@ def avg_returns(dim_hidden_lstm, lstm_learning_rate, dim_hidden_a2c, value_error
 
     # 1000 epochs with 10 barcodes == 100k episodes
     # Ritter returns were averaging ~0.35 at this point in training
-    exp_settings['epochs'] = 1000
+    exp_settings['epochs'] = 1500
     exp_settings['num_arms'] = 10
     exp_settings['barcode_size'] = 10
     exp_settings['num_barcodes'] = 10
@@ -38,15 +37,19 @@ def avg_returns(dim_hidden_lstm, lstm_learning_rate, dim_hidden_a2c, value_error
 
     # HyperParam Searches for BayesOpt #
     # LSTM Model Info
-    exp_settings['dim_hidden_lstm'] = int(2**dim_hidden_lstm)
+    # exp_settings['dim_hidden_lstm'] = int(2**dim_hidden_lstm)
+    exp_settings['dim_hidden_lstm'] = 125
+
     exp_settings['value_error_coef'] = value_error_coef
     exp_settings['entropy_error_coef'] = entropy_error_coef
 
     # Using ints in bayes-opt for better performance there
-    exp_settings['lstm_learning_rate'] = 10**lstm_learning_rate
+    # exp_settings['lstm_learning_rate'] = 10**lstm_learning_rate
+    exp_settings['lstm_learning_rate'] = 0.001405
 
     # A2C Model Info
-    exp_settings['dim_hidden_a2c'] = int(2**dim_hidden_a2c)
+    # exp_settings['dim_hidden_a2c'] = int(2**dim_hidden_a2c)
+    exp_settings['dim_hidden_a2c'] = 364
 
     # Embedder Model Info
     exp_settings['embedding_size'] = 512
@@ -55,7 +58,7 @@ def avg_returns(dim_hidden_lstm, lstm_learning_rate, dim_hidden_a2c, value_error
 
     # Current function being used as maximization target is just avg of total epoch returns
     logs, key_data = run_experiment_sl(exp_settings)
-    log_return, log_loss_value, log_loss_policy, log_embedder_accuracy, embedder_loss = logs
+    log_return, log_loss_value, log_loss_policy, log_loss_total, log_embedder_accuracy, embedder_loss = logs
     keys, prediction_mapping, epoch_mapping, barcode_data = key_data
 
     # Focusing only on last quarter of returns to maximize longer term learning
@@ -63,11 +66,13 @@ def avg_returns(dim_hidden_lstm, lstm_learning_rate, dim_hidden_a2c, value_error
     return np.mean(log_return[final_q:])
 
 # Bounded region of parameter space
-pbounds = { 'dim_hidden_a2c': (5, 9),  #transformed into 2**5 -> 2**9 in function
-            'dim_hidden_lstm': (5, 9),  # transformed into 2**5 -> 2**9 in function
-            'entropy_error_coef': (0, 0.25),
-            'lstm_learning_rate': (-5, -2), #transformed into 1e-5 -> 1e-2 in function
-            'value_error_coef': (0, 0.75)}
+pbounds = { 
+            # 'dim_hidden_a2c': (5, 9),  #transformed into 2**5 -> 2**9 in function
+            # 'dim_hidden_lstm': (5, 9),  # transformed into 2**5 -> 2**9 in function
+            'entropy_error_coef': (0, 0.5),
+            # 'lstm_learning_rate': (-5, -2), #transformed into 1e-5 -> 1e-2 in function
+            'value_error_coef': (0, 0.75)
+            }
 
 # Best Results So Far 
 # (4 arms/barcodes, 10 pulls, 1500 epochs, last quarter returns, bounds_transformer off)
@@ -109,8 +114,8 @@ optimizer = BayesianOptimization(
 # logger = JSONLogger(path="./dnd-lstm-sup-learning/src/logs_4.json", reset=False)
 
 # 10 arms/barcodes/pulls
-load_logs(optimizer, logs=["./dnd-lstm-sup-learning/src/logs_10.json"])
-logger = JSONLogger(path="./dnd-lstm-sup-learning/src/logs_10.json", reset=False)
+# load_logs(optimizer, logs=["./dnd-lstm-sup-learning/src/logs_10.json"])
+logger = JSONLogger(path="./dnd-lstm-sup-learning/src/logs_10_loss_coefs.json", reset=False)
 
 optimizer.subscribe(Events.OPTIMIZATION_STEP, logger)
 print("New optimizer is now aware of {} points.".format(len(optimizer.space)))
@@ -152,8 +157,8 @@ print("New optimizer is now aware of {} points.".format(len(optimizer.space)))
 # print("New optimizer is now aware of {} points.".format(len(optimizer.space)))
 
 optimizer.maximize(
-    init_points=1,
-    n_iter=7,
+    init_points=4,
+    n_iter=8,
 )
 
 # # # for i, res in enumerate(optimizer.res):
