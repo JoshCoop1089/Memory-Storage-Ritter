@@ -250,25 +250,28 @@ class DND():
             print(e)
             pass
 
-        # Embedding Model Loss Backprop Time
-        agent = self.embedder
-        loss_vals = [trial_hidden_states[i][2] for i in range(len(trial_hidden_states))]
-        episode_loss = torch.stack(loss_vals).mean()
-        self.embedder_loss[self.epoch_counter] += (episode_loss/self.exp_settings['episodes_per_epoch'])
+        # Attempt to stabilize accuracy -> Only train model after 50 epochs to let LSTM stabilize?
+        if self.epoch_counter > 50:
+            # Embedding Model Loss Backprop Time
+            agent = self.embedder
+            loss_vals = [trial_hidden_states[i][2] for i in range(len(trial_hidden_states))]
+            episode_loss = torch.stack(loss_vals).mean()
+            self.embedder_loss[self.epoch_counter] += (episode_loss/(self.exp_settings['num_barcodes']**2))
 
-        # Unfreeze Embedder to train
-        for name, param in agent.named_parameters():
-            # print(name, param.grad)
-            param.requires_grad = True
+            # Unfreeze Embedder to train
+            for name, param in agent.named_parameters():
+                if param.requires_grad:
+                    print(name, param.grad)
+                param.requires_grad = True
 
-        self.embed_optimizer.zero_grad()
-        episode_loss.backward(retain_graph=True)
-        self.embed_optimizer.step()
+            self.embed_optimizer.zero_grad()
+            episode_loss.backward(retain_graph=True)
+            self.embed_optimizer.step()
 
-        # Freeze Embedder until next memory retrieval
-        for name, param in agent.named_parameters():
-            # print(name, param.grad)
-            param.requires_grad = False
+            # Freeze Embedder until next memory retrieval
+            for name, param in agent.named_parameters():
+                # print(name, param.grad)
+                param.requires_grad = False
 
     def save_memory_non_embedder(self, memory_key, barcode_string, memory_val):
 
@@ -386,7 +389,7 @@ class DND():
         best_memory_id = torch.argmax(soft)
         # print(best_memory_id)
         # print(key_list)
-        predicted_context = self.sorted_key_list[int(best_memory_id)]
+        predicted_context = self.sorted_key_list[best_memory_id]
         # print('P-CTX:', predicted_context)
         # print('R-CTX:', real_label_as_string)
 

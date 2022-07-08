@@ -8,13 +8,14 @@ from bayes_opt.util import load_logs
 
 import numpy as np
 
-
-def avg_returns(dim_hidden_lstm = 0, lstm_learning_rate = 0, dim_hidden_a2c = 0, value_error_coef = 0, entropy_error_coef = 0):
+def avg_returns(dim_hidden_lstm = 0, lstm_learning_rate = 0, dim_hidden_a2c = 0, 
+                value_error_coef = 0, entropy_error_coef = 0,
+                embedding_size = 0, embedding_learning_rate = 0):
 
     # Experimental Parameters
     exp_settings = {}
     exp_settings['randomize'] = False
-    exp_settings['tensorboard_logging'] = True
+    exp_settings['tensorboard_logging'] = False
     exp_settings['timing'] = False
 
     # Task Info
@@ -26,36 +27,43 @@ def avg_returns(dim_hidden_lstm = 0, lstm_learning_rate = 0, dim_hidden_a2c = 0,
 
     # 1000 epochs with 10 barcodes == 100k episodes
     # Ritter returns were averaging ~0.35 at this point in training
-    exp_settings['epochs'] = 1500
-    exp_settings['num_arms'] = 10
-    exp_settings['barcode_size'] = 10
-    exp_settings['num_barcodes'] = 10
+    exp_settings['epochs'] = 1000
+    exp_settings['num_arms'] = 4
+    exp_settings['barcode_size'] = 4
+    exp_settings['num_barcodes'] = 4
     exp_settings['pulls_per_episode'] = 10
     exp_settings['perfect_info'] = False
     exp_settings['reset_barcodes_per_epoch'] = False
     exp_settings['reset_arms_per_epoch'] = True
 
     # HyperParam Searches for BayesOpt #
-    # LSTM Model Info
-    # exp_settings['dim_hidden_lstm'] = int(2**dim_hidden_lstm)
-    exp_settings['dim_hidden_lstm'] = 125
-
+    # Using ints in bayes-opt for better performance
+    exp_settings['dim_hidden_lstm'] = int(2**dim_hidden_lstm)
     exp_settings['value_error_coef'] = value_error_coef
     exp_settings['entropy_error_coef'] = entropy_error_coef
+    exp_settings['lstm_learning_rate'] = 10**lstm_learning_rate
+    exp_settings['dim_hidden_a2c'] = int(2**dim_hidden_a2c)
+    # exp_settings['embedder_learning_rate'] = 10**embedding_learning_rate
+    # exp_settings['embedding_size'] = int(2**embedding_size)
 
-    # Using ints in bayes-opt for better performance there
-    # exp_settings['lstm_learning_rate'] = 10**lstm_learning_rate
-    exp_settings['lstm_learning_rate'] = 0.001405
-
-    # A2C Model Info
-    # exp_settings['dim_hidden_a2c'] = int(2**dim_hidden_a2c)
-    exp_settings['dim_hidden_a2c'] = 364
+    # LSTM/A2C Model Info
+    # exp_settings['dim_hidden_a2c'] = 364
+    # exp_settings['dim_hidden_lstm'] = 125
+    # exp_settings['entropy_error_coef'] = .054388
+    # exp_settings['lstm_learning_rate'] = 0.001405
+    # exp_settings['value_error_coef'] = .276659
 
     # Embedder Model Info
-    exp_settings['embedding_size'] = 512
-    exp_settings['embedder_learning_rate'] = 5e-4
+    exp_settings['embedder_learning_rate'] = 10**embedding_learning_rate
+    exp_settings['embedding_size'] = int(2**embedding_size)
     #End HyperParam Searches for BayesOpt#
 
+    # Print out current hyperparams to console
+    print("\nNext Run Commencing with the following params:")
+    print(f"A2C_Size: {exp_settings['dim_hidden_a2c']} | LSTM_Size: {exp_settings['dim_hidden_lstm']} | LSTM_LR: {round(exp_settings['lstm_learning_rate'], 5)}")
+    print(f"Value_Coef: {round(exp_settings['value_error_coef'], 4)} | Entropy_Coef: {round(exp_settings['entropy_error_coef'], 4)}")
+    # print(f"Emb_LR: {exp_settings['embedder_learning_rate']} | Emb_Size: {exp_settings['embedding_size']}")
+    
     # Current function being used as maximization target is just avg of total epoch returns
     logs, key_data = run_experiment_sl(exp_settings)
     log_return, log_loss_value, log_loss_policy, log_loss_total, log_embedder_accuracy, embedder_loss = logs
@@ -64,15 +72,6 @@ def avg_returns(dim_hidden_lstm = 0, lstm_learning_rate = 0, dim_hidden_a2c = 0,
     # Focusing only on last quarter of returns to maximize longer term learning
     final_q = 3*(exp_settings['epochs']//4)
     return np.mean(log_return[final_q:])
-
-# Bounded region of parameter space
-pbounds = { 
-            # 'dim_hidden_a2c': (5, 9),  #transformed into 2**5 -> 2**9 in function
-            # 'dim_hidden_lstm': (5, 9),  # transformed into 2**5 -> 2**9 in function
-            'entropy_error_coef': (0, 0.5),
-            # 'lstm_learning_rate': (-5, -2), #transformed into 1e-5 -> 1e-2 in function
-            'value_error_coef': (0, 0.75)
-            }
 
 # Best Results So Far 
 # (4 arms/barcodes, 10 pulls, 1500 epochs, last quarter returns, bounds_transformer off)
@@ -86,7 +85,10 @@ pbounds = {
 # |  21       |  0.592      |  404.8    |  124.4    |  0.07925  |  0.002947 |  0.2597   |
 # |  24       |  0.5844     |  399.8    |  120.8    |  0.07298  |  0.002679 |  0.2805   |
 
-# Storing runs because these take so fkn long
+# (4 arms/barcodes, 10 pulls, 1000 Epochs, last quarter returns)
+# {"target": 0.6357, "params": {"dim_hidden_a2c": 6.8757, "dim_hidden_lstm": 5.15,
+#  "entropy_error_coef": 0.0651, "lstm_learning_rate": -2.883, "value_error_coef": 0.3514},
+
 # (10 arms/barcodes, 10 pulls, 2000 epochs, last quarter returns, bounds_transformer on)
 # | Iter      | Avg_Ret     |A2C Dim    |LSTM Dim   |Ent Coef   |LSTM LR    |Value Coef |
 # |  1        |  0.1869     |  250.8    |  193.4    |  2.859e-0 |  0.003024 |  0.1468   |
@@ -95,6 +97,25 @@ pbounds = {
 # |  4        |  0.2878     |  364.4    |  125.5    |  0.1397   |  0.001405 |  0.1981   |
 # |  5        |  0.184      |  422.7    |  248.9    |  0.07836  |  0.006924 |  0.8764   |
 # |  6        |  0.1967     |  363.8    |  124.7    |  0.1183   |  0.003332 |  0.0559   |
+
+# 10abp
+# | Iter      | Avg_Ret     |A2C Dim    |LSTM Dim   |Ent Coef   |LSTM LR (10**x)|Value Coef |
+# |  ??       |  0.32       |  364.4    |  125.5    |  0.05439  |  -2.852       |  0.276659 |
+
+# Embedder Model 
+# Best Result for 4ab/10p    
+# {"target": 0.753, "params": {"embedding_learning_rate": -3.0399, "embedding_size": 8.629}
+    
+# Bounded region of parameter space
+pbounds = { 
+            'dim_hidden_a2c': (5, 9),             #transformed into 2**x in function
+            'dim_hidden_lstm': (5, 9),            #transformed into 2**x in function
+            'entropy_error_coef': (0, 0.5),
+            'lstm_learning_rate': (-5, -2),       #transformed into 10**x in function
+            'value_error_coef': (0, 0.75)
+            # 'embedding_learning_rate': (-5, -2),    #transformed into 10**x in function
+            # 'embedding_size': (5,10),               #transformed into 2**x in function
+            }
 
 # Does this cause it to converge too quickly?
 # bounds_transformer = SequentialDomainReductionTransformer()
@@ -110,12 +131,13 @@ optimizer = BayesianOptimization(
 # Suspend/Resume Function for longer iterations
 
 # 4 arms/barcodes, 10 pulls
-# load_logs(optimizer, logs=["./dnd-lstm-sup-learning/src/logs_4.json"])
-# logger = JSONLogger(path="./dnd-lstm-sup-learning/src/logs_4.json", reset=False)
+load_logs(optimizer, logs=["./dnd-lstm-sup-learning/src/logs_4.json"])
+logger = JSONLogger(
+    path="./dnd-lstm-sup-learning/src/logs_4_1k_epochs.json", reset=False)
 
 # 10 arms/barcodes/pulls
 # load_logs(optimizer, logs=["./dnd-lstm-sup-learning/src/logs_10.json"])
-logger = JSONLogger(path="./dnd-lstm-sup-learning/src/logs_10_loss_coefs.json", reset=False)
+# logger = JSONLogger(path="./dnd-lstm-sup-learning/src/logs_10_loss_coefs.json", reset=False)
 
 optimizer.subscribe(Events.OPTIMIZATION_STEP, logger)
 print("New optimizer is now aware of {} points.".format(len(optimizer.space)))
@@ -130,7 +152,6 @@ print("New optimizer is now aware of {} points.".format(len(optimizer.space)))
 # "|  4        |  0.2878     |  364.4    |  125.5    |  0.1397   |  -2.8523236757589014 |  0.1981   |",
 # "|  5        |  0.184      |  422.7    |  248.9    |  0.07836  |  -2.159642940796644 |  0.8764   |",
 # "|  6        |  0.1967     |  363.8    |  124.7    |  0.1183   |  -2.47729500726525 |  0.0559   |"
-
 # ]
 
 # {"target": 0.1890480000000001, "params": {"dim_hidden_a2c": 360.28050479192956, "dim_hidden_lstm": 144.9514141076652, "entropy_error_coef": 0.06526811936609955, "lstm_learning_rate": -3.1330933661544993, "value_error_coef": 0.40681007049253626}, "datetime": {"datetime": "2022-06-23 07:23:34", "elapsed": 0.0, "delta": 0.0}}
@@ -147,7 +168,6 @@ print("New optimizer is now aware of {} points.".format(len(optimizer.space)))
 # {"target": 0.1881920000000001, "params": {"dim_hidden_a2c": 361.9867714168124, "dim_hidden_lstm": 125.75799619296069, "entropy_error_coef": 0.10399705748487956, "lstm_learning_rate": -2.4802976731528377, "value_error_coef": 0.9003656997697922}, "datetime": {"datetime": "2022-06-25 03:01:29", "elapsed": 11046.485084, "delta": 3677.688794}}
 # {"target": 0.1849786666666668, "params": {"dim_hidden_a2c": 238.03793802874452, "dim_hidden_lstm": 239.3684941387513, "entropy_error_coef": 0.21219179505158609, "lstm_learning_rate": -3.2403981549142262, "value_error_coef": 0.2193865132025623}, "datetime": {"datetime": "2022-06-25 04:25:12", "elapsed": 16070.044709, "delta": 5023.559625}}
 
-
 # for val in obs:
 #     val_split = val.split('|')
 #     tar = float(val_split[2])
@@ -157,8 +177,8 @@ print("New optimizer is now aware of {} points.".format(len(optimizer.space)))
 # print("New optimizer is now aware of {} points.".format(len(optimizer.space)))
 
 optimizer.maximize(
-    init_points=4,
-    n_iter=8,
+    init_points=16,
+    n_iter=32,
 )
 
 # # # for i, res in enumerate(optimizer.res):

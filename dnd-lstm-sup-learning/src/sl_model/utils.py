@@ -59,8 +59,6 @@ def get_reward(a_t, a_t_targ):
 def get_reward_from_assumed_barcode(a_t, assumed_barcode, mapping, device, perfect_info = False):
     """
     Uses the embedding models prediction of a barcode to pull a specific arm.
-    The reward from that pull is checked against the reward from the observation.
-    Actual LSTM reward is if those two rewards match each other.
     """
     try:
         # print(a_t, assumed_barcode)
@@ -83,7 +81,6 @@ def get_reward_from_assumed_barcode(a_t, assumed_barcode, mapping, device, perfe
         # print(e)
         reward = 0.0
 
-    # print("P-R:", reward, "R-R:", reward_from_obs)
     return torch.tensor(reward, device=device)
 
 def compute_a2c_loss(probs, values, returns, entropy):
@@ -122,5 +119,5 @@ def compute_a2c_loss(probs, values, returns, entropy):
     entropies = torch.stack(entropy).mean()
     # loss_policy = torch.stack(policy_grads).sum()
     # loss_value = torch.stack(value_losses).sum()
-    # entropies = torch.stack(entropies).sum()
+    # entropies = torch.stack(entropy).sum()
     return loss_policy, loss_value, entropies

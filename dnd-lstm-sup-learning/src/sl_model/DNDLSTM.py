@@ -183,7 +183,7 @@ class DNDLSTM(nn.Module):
             forward_action = time.perf_counter() - forward_save - forward_get_mem - forward_prep - \
                 forward_preact - forward_gate - forward_start
             timings = { "1a. Prep": forward_prep, "1b. PreAct": forward_preact, "1c. Gate": forward_gate,
-                        "1d. Get_mem": forward_get_mem, "1e. Action": forward_action, "1f. Save_mem (% per episode)": forward_save}
+                        "1d. Get_mem": forward_get_mem, "1e. Action": forward_action, "1f. Save_mem (% of ep)": forward_save}
         
         # fetch activity
         output = (a_t, predicted_barcode, prob_a_t, v_t, entropy, h_t, c_t)

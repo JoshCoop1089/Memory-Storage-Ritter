@@ -32,13 +32,13 @@ class A2C(nn.Module):
         super(A2C, self).__init__()
         self.dim_input = dim_input
         self.dim_output = dim_output
-
-        # Smaller as you go further in?
         self.dim_hidden = dim_hidden
 
+        # Shared Feature Extractor
+        self.ih = nn.Linear(self.dim_input, self.dim_hidden, device = device)
+
         # Actor/Policy Network
-        self.ih = nn.Linear(dim_input, self.dim_hidden, device = device)
-        self.actor = nn.Linear(self.dim_hidden, dim_output, device = device)
+        self.actor = nn.Linear(self.dim_hidden, self.dim_output, device = device)
 
         # Critic/Value Network
         self.critic = nn.Linear(self.dim_hidden, 1, device = device)
