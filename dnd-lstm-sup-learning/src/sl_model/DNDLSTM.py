@@ -48,28 +48,16 @@ class DNDLSTM(nn.Module):
             elif 'bias' in name:
                 torch.nn.init.constant_(wts, 0)
 
-    def forward(self, observation_barcode_reward, barcode_string, h, c):
+    def forward(self, obs_bar_reward, barcode_string, barcode_tensor, h, c):
 
         forward_start = time.perf_counter()
-        # unpack activity
-        h = h.view(h.size(1), -1)
-        c = c.view(c.size(1), -1)
-        obs_bar_reward = observation_barcode_reward.view(observation_barcode_reward.size(1), -1)
-
-        # Form the inputs nicely
-        # Inputs are [obs, context, reward] when they come in
-        observation = obs_bar_reward[0][:self.exp_settings['num_arms']].view(1, self.exp_settings['num_arms'])
-        context = obs_bar_reward[0][self.exp_settings['num_arms']:-1].view(
-            1, self.exp_settings['barcode_size'])
-        # if not self.dnd.encoding_off:
-        #     print('Obs: ', observation)
-        #     print('R-CTX:', context)
 
         # Into LSTM
         if self.exp_settings['agent_input'] == 'obs/context':
             x_t = obs_bar_reward
         elif self.exp_settings['agent_input'] == 'obs':
-            x_t = observation
+            # This would only be needed for QiHongs og task, and I don't think this will work like I want it to
+            x_t = obs_bar_reward[0][:self.exp_settings['num_arms']].view(1, self.exp_settings['num_arms'])
         else:
             raise ValueError('Incorrect agent_input type')
         # print(x_t)
@@ -77,7 +65,7 @@ class DNDLSTM(nn.Module):
         # Used for memory search/storage (non embedder versions)
         if self.exp_settings['mem_store'] != 'embedding':
             if self.exp_settings['mem_store'] == 'context':
-                q_t = context
+                q_t = barcode_tensor
             elif self.exp_settings['mem_store'] == 'obs/context':
                 q_t = obs_bar_reward
             else:
@@ -96,13 +84,16 @@ class DNDLSTM(nn.Module):
 
         # get all gate values
         gates = preact[:, : N_GATES * self.dim_hidden_lstm].sigmoid()
+
         # split input(write) gate, forget gate, output(read) gate
         f_t = gates[:, :self.dim_hidden_lstm]
         i_t = gates[:, self.dim_hidden_lstm:2 * self.dim_hidden_lstm]
         o_t = gates[:, 2*self.dim_hidden_lstm:3 * self.dim_hidden_lstm]
         r_t = gates[:, -self.dim_hidden_lstm:]
+
         # stuff to be written to cell state
         c_t_new = preact[:, N_GATES * self.dim_hidden_lstm:].tanh()
+
         # new cell state = gated(prev_c) + gated(new_stuff)
         c_t = torch.mul(f_t, c) + torch.mul(i_t, c_t_new)
         
@@ -117,21 +108,21 @@ class DNDLSTM(nn.Module):
                     param.requires_grad = False 
                 # print(name, param.data, param.grad)
 
-            # print("B-Retrieve:\n", self.a2c.critic.weight.grad)
-            # print("B-Retrieve:\n", self.dnd.embedder.e2c.weight.grad)
+            # print("B-Retrieve:\n", self.a2c.critic.weight)
+            # print("B-Retrieve:\n", self.dnd.embedder.e2c.weight)
     
-            # Query Memory (hidden state passed into embedder, context used for embedder loss function)
+            # Query Memory (hidden state passed into embedder, barcode_string used for embedder loss function)
             mem, predicted_barcode = self.dnd.get_memory(h, barcode_string)
             m_t = mem.tanh()
+
+            # print("A-Retrieve:\n", self.a2c.critic.weight)
+            # print("A-Retrieve:\n", self.dnd.embedder.e2c.weight)
 
             # Unfreeze LSTM
             for layer in layers:
                 for name, param in layer.named_parameters():
                     param.requires_grad = True 
                 # print(name, param.data)
-
-            # print("A-Retrieve:\n", self.a2c.critic.weight.grad)
-            # print("A-Retrieve:\n", self.dnd.embedder.e2c.weight.grad)
 
         else:
             mem, predicted_barcode = self.dnd.get_memory_non_embedder(q_t)
@@ -147,6 +138,7 @@ class DNDLSTM(nn.Module):
         h_t = torch.mul(o_t, c_t.tanh())
 
         forward_save = 0
+        # Saving memory happens once at the end of every episode
         if not self.dnd.encoding_off:
             if self.exp_settings['mem_store'] == 'embedding':
                 # Freeze all LSTM Layers before getting memory
@@ -155,8 +147,14 @@ class DNDLSTM(nn.Module):
                     for name, param in layer.named_parameters():
                         param.requires_grad = False 
 
+                # print("Before-a2c s:\n", self.a2c.critic.weight)
+                # print("Before-emb s:\n", self.dnd.embedder.e2c.weight)
+
                 # Saving Memory (hidden state passed into embedder, embedding is key and c_t is val)
                 self.dnd.save_memory(h_t, c_t)
+
+                # print("After-a2c s:\n", self.a2c.critic.weight)
+                # print("After-emb s:\n", self.dnd.embedder.e2c.weight)
 
                 layers_after = [self.i2h, self.h2h, self.a2c]
                 # Unfreeze LSTM
@@ -174,9 +172,6 @@ class DNDLSTM(nn.Module):
         pi_a_t, v_t, entropy = self.a2c.forward(h_t)
         # pick an action
         a_t, prob_a_t = self.pick_action(pi_a_t)
-        # reshape data
-        h_t = h_t.view(1, h_t.size(0), -1)
-        c_t = c_t.view(1, c_t.size(0), -1)
 
         timings = {}
         if self.exp_settings['timing']:
@@ -210,8 +205,8 @@ class DNDLSTM(nn.Module):
         return a_t, log_prob_a_t
 
     def get_init_states(self, scale=.1):
-        h_0 = torch.randn(1, 1, self.dim_hidden_lstm, device = self.device) * scale
-        c_0 = torch.randn(1, 1, self.dim_hidden_lstm,
+        h_0 = torch.randn(1, self.dim_hidden_lstm, device = self.device) * scale
+        c_0 = torch.randn(1, self.dim_hidden_lstm,
                           device=self.device) * scale
         return h_0, c_0
 
@@ -243,7 +238,6 @@ class DNDLSTM(nn.Module):
         mem_keys = self.dnd.keys
         predicted_mapping_to_keys = self.dnd.key_context_map
         return mem_keys, predicted_mapping_to_keys
-
 
     def difference_of_weights(self, prior_vals):
         layers = [self.i2h, self.h2h, self.a2c]

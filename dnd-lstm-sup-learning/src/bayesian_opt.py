@@ -17,6 +17,7 @@ def avg_returns(dim_hidden_lstm = 0, lstm_learning_rate = 0, dim_hidden_a2c = 0,
     exp_settings['randomize'] = False
     exp_settings['tensorboard_logging'] = False
     exp_settings['timing'] = False
+    exp_settings['lstm_inputs_looped'] = True
 
     # Task Info
     exp_settings['kernel'] = 'cosine'           #cosine, l2
@@ -108,11 +109,11 @@ def avg_returns(dim_hidden_lstm = 0, lstm_learning_rate = 0, dim_hidden_a2c = 0,
     
 # Bounded region of parameter space
 pbounds = { 
-            'dim_hidden_a2c': (5, 9),             #transformed into 2**x in function
-            'dim_hidden_lstm': (5, 9),            #transformed into 2**x in function
+            'dim_hidden_a2c': (5, 9),               #transformed into 2**x in function
+            'dim_hidden_lstm': (5, 9),              #transformed into 2**x in function
             'entropy_error_coef': (0, 0.5),
-            'lstm_learning_rate': (-5, -2),       #transformed into 10**x in function
-            'value_error_coef': (0, 0.75)
+            'lstm_learning_rate': (-5, -2),         #transformed into 10**x in function
+            'value_error_coef': (0, 0.75),
             # 'embedding_learning_rate': (-5, -2),    #transformed into 10**x in function
             # 'embedding_size': (5,10),               #transformed into 2**x in function
             }
@@ -131,9 +132,10 @@ optimizer = BayesianOptimization(
 # Suspend/Resume Function for longer iterations
 
 # 4 arms/barcodes, 10 pulls
-load_logs(optimizer, logs=["./dnd-lstm-sup-learning/src/logs_4.json"])
+# load_logs(optimizer, logs=[
+#           "./dnd-lstm-sup-learning/src/logs_4_1k_epochs.json"])
 logger = JSONLogger(
-    path="./dnd-lstm-sup-learning/src/logs_4_1k_epochs.json", reset=False)
+    path="./dnd-lstm-sup-learning/src/logs_4_1k_epochs_loop.json", reset=False)
 
 # 10 arms/barcodes/pulls
 # load_logs(optimizer, logs=["./dnd-lstm-sup-learning/src/logs_10.json"])
@@ -177,8 +179,8 @@ print("New optimizer is now aware of {} points.".format(len(optimizer.space)))
 # print("New optimizer is now aware of {} points.".format(len(optimizer.space)))
 
 optimizer.maximize(
-    init_points=16,
-    n_iter=32,
+    init_points=10,
+    n_iter=30,
 )
 
 # # # for i, res in enumerate(optimizer.res):

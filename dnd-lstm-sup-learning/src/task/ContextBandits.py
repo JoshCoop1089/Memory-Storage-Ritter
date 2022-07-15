@@ -44,6 +44,9 @@ import numpy as np
 import random
 
 class ContextualBandit():
+    """
+    Create a Contextual Bandit Task with either deterministic arm rewards or a 90%/10% reward chance
+    """
 
     def __init__(self, 
                     pulls_per_episode, episodes_per_epoch, 
@@ -53,11 +56,13 @@ class ContextualBandit():
 
         # Task Specific
         self.device = device
-        self.pulls_per_episode = pulls_per_episode
         self.episodes_per_epoch = episodes_per_epoch
         self.reset_barcode_mapping = reset_barcode_mapping
         self.reset_arms_per_epoch = reset_arms_per_epoch
         self.noise_observations = noise_observations
+
+        # Looping the LSTM inputs, so only need one pull per episode to start it off
+        self.pulls_per_episode = 1
 
         # Arm Specific
         self.num_arms = num_arms
@@ -74,24 +79,17 @@ class ContextualBandit():
 
     def sample(self, to_torch=True):
         """
-        Get a single epochs worth of observations and rewards for a newly created barcode mapping
+        Get a single epochs worth of observations and rewards for input to LSTM
 
-        Parameters:
-        num_arms: int
-            Number of unique arms which can be pulled
-        num_barcodes: int
-            Number of unique contexts which can map to a specific arm
-            (Length of barcode is same as number of arms for now, can be changed)
+        Args (Defined at program runtime):
+            self.reset_barcode_mapping (Boolean): Whether you recreate the set of randomized barcodes
+            self.reset_arms_per_epoch (Boolean): Whether you reset the distinct mapping of barcode to good arm, while not changing the original barcode values
 
         Returns:
-        observations: tensor
-            a sequence of arm pulls
-        barcodes: tensor
-            the context for each arm pull
-        rewards: tensor
-            the reward gained from an armpull in that specific context
-        epoch_mapping: dict {barcode -> arm}
-            shows which arm has the 90% reward chance per barcode
+            obs_barcodes_rewards (Tensor): All pulls/barcodes/rewards for the epoch
+            self.epoch_mapping (Dict (String -> Int)): What arm is best for a barcode
+            barcode_strings (Numpy Array): Replication of barcodes as string for easier referencing later in program
+            barcode_tensors (Tensor): Replication of barcode tiled to match length of epoch
         """
 
         # Generate a new random set of barcodes to execute pulls from
@@ -108,7 +106,8 @@ class ContextualBandit():
         # to pytorch form
         if to_torch:
             obs_barcodes_rewards = to_pth(obs_barcodes_rewards).to(self.device)
-        return obs_barcodes_rewards, self.epoch_mapping, barcode_strings
+            barcode_tensors = to_pth(barcode_p1).to(self.device)
+        return obs_barcodes_rewards, self.epoch_mapping, barcode_strings, barcode_tensors
 
     def generate_barcode_mapping(self):
         barcode_bag = set()
@@ -134,7 +133,7 @@ class ContextualBandit():
     def map_arms_to_barcodes(self, mapping = None, barcode_list = None):
         if mapping:
             barcode_list = list(mapping.keys())
-        else:
+        else: #barcode_list != None is required
             mapping = {}
 
         # Generate mapping of barcode to good arm
@@ -166,7 +165,7 @@ class ContextualBandit():
         # 4 unique barcodes -> 16 total barcodes in bag, 4 copies of each unique barcode
         trial_barcode_bag = []
         for barcode in mapping:
-            for i in range(self.num_barcodes):
+            for _ in range(self.num_barcodes):
                 trial_barcode_bag.append(barcode)
         random.shuffle(trial_barcode_bag)
 
@@ -181,6 +180,18 @@ class ContextualBandit():
         return observations, rewards, barcodes, barcodes_strings
 
     def generate_one_episode(self, barcode, mapping):
+        """
+        Create a single series of pulls, with rewards specified under the input barcode
+        Args:
+            barcode (String): Context Label for Arm ID
+            mapping (Dict(String -> Int)): What arm is best for a barcode
+
+        Returns:
+            trial_pulls (Numpy Array): Contains all distinct arm pulls in order
+            trial_rewards (Numpy Array): All rewards for arm pulls under input barcode
+            bar_ar (Numpy Array): Input barcode tiled to match length of trial pulls
+            bar_strings (Numpy Array): Input barcode as string for easier referencing later in program            
+        """
         # Generate arm pulling sequence for single episode
         # Creates an Arms X Pulls matrix, using np.eye to onehotencode arm pulls
         trial_pulls = np.eye(self.num_arms)[np.random.choice(
@@ -254,53 +265,53 @@ if __name__ == '__main__':
     print("Mapping:", task.epoch_mapping)
     print("Concat:", outp)
 
-"""
-Observation:
-    Onehot encoded arm pull
-        (ie, pull arm 2, input is 010)
-Barcode
-    (example case above (001 -> 90% arm3 reward))
-Reward:
-    based on barcode, apply percent chance to observation
-        (in this case, 10% chance due to pulling arm2 in arm3 barcode)
+    """
+    Observation:
+        Onehot encoded arm pull
+            (ie, pull arm 2, input is 010)
+    Barcode
+        (example case above (001 -> 90% arm3 reward))
+    Reward:
+        based on barcode, apply percent chance to observation
+            (in this case, 10% chance due to pulling arm2 in arm3 barcode)
 
-Epoch/Sample Generation:
-    Number of times a barcode repeats over a single trial = # total barcodes
-
-
-
-LSTM:
-    inputs:
-        Observation, Barcode
-            might not pass both into model, but both are required for embedder training
-
-    generate hidden state:
-        pass HS through embedder to check for task in memory (dnd.get_memory)
-            Embedder would output both the embedding and the softmax distribution of what it thinks the task is
-                Barcode one hot encoding as class labels for outputs?
-            this is also where embedder training happens with actual barcode used for cross-entropy loss
-        return LSTM c-state and reintegrate
-
-        pass HS into RL algo
-    RL:
-        hidden state of LSTM -> a2c
-        a2c gives policy
-        policy into pick action
-        pick action gives what arm to pull
-
-        output:
-            what arm to pull
-
-    LSTM Outputs:
-        arm to pull, embedding assumed barcode
-    
-
-Reward for LSTM:
-    agent will have to also export the embedding assumed task barcode to ID arm chances
-    given export barcode, pull lever based on action choice from RL
-    barcode gives prob over arms
-    Reward is based on distrib over arms/arm choice
+    Epoch/Sample Generation:
+        Number of times a barcode repeats over a single trial = # total barcodes
 
 
-   *** Need new reward function for pulling arm
-"""
+
+    LSTM:
+        inputs:
+            Observation, Barcode
+                might not pass both into model, but both are required for embedder training
+
+        generate hidden state:
+            pass HS through embedder to check for task in memory (dnd.get_memory)
+                Embedder would output both the embedding and the softmax distribution of what it thinks the task is
+                    Barcode one hot encoding as class labels for outputs?
+                this is also where embedder training happens with actual barcode used for cross-entropy loss
+            return LSTM c-state and reintegrate
+
+            pass HS into RL algo
+        RL:
+            hidden state of LSTM -> a2c
+            a2c gives policy
+            policy into pick action
+            pick action gives what arm to pull
+
+            output:
+                what arm to pull
+
+        LSTM Outputs:
+            arm to pull, embedding assumed barcode
+        
+
+    Reward for LSTM:
+        agent will have to also export the embedding assumed task barcode to ID arm chances
+        given export barcode, pull lever based on action choice from RL
+        barcode gives prob over arms
+        Reward is based on distrib over arms/arm choice
+
+
+    *** Need new reward function for pulling arm
+    """

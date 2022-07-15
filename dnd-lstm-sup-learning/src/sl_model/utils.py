@@ -1,4 +1,3 @@
-# from sklearn.metrics import mean_squared_error
 import torch
 import numpy as np
 from torch.nn.functional import mse_loss, smooth_l1_loss
@@ -58,7 +57,17 @@ def get_reward(a_t, a_t_targ):
 
 def get_reward_from_assumed_barcode(a_t, assumed_barcode, mapping, device, perfect_info = False):
     """
-    Uses the embedding models prediction of a barcode to pull a specific arm.
+    Once the A2C Policy predicts an action, determine the reward for that action under a certain barcode
+
+    Args:
+        a_t (Tensor): Arm chosen by A2C policy
+        assumed_barcode (String): Predicted context taken from memory of LSTM
+        mapping (Dict (String->Int)): What arm is best for every barcode
+        device (torch.device): CPU or GPU location for tensors
+        perfect_info (bool, optional): Whether the arms are deterministic (Only right arm would give reward, no chance otherwise). Defaults to False.
+
+    Returns:
+        Tensor: Reward calculated for arm pull under assumed barcode
     """
     try:
         # print(a_t, assumed_barcode)
@@ -76,7 +85,7 @@ def get_reward_from_assumed_barcode(a_t, assumed_barcode, mapping, device, perfe
         else:  # perfect_info == True
             reward = float(torch.eq(a_t, best_arm))
 
-    # Penalize a predicted barcode which isn't a part of the mapping for the epoch
+    # Empty barcode returns for the first episode of an epoch because there is nothing in memory
     except Exception as e:
         # print(e)
         reward = 0.0
@@ -103,9 +112,7 @@ def compute_a2c_loss(probs, values, returns, entropy):
     """
     policy_grads, value_losses = [], []
     for prob_t, v_t, R_t in zip(probs, values, returns):
-        # A_t = torch.sub(R_t,v_t)
         A_t = R_t - v_t.item()
-
         # print(A_t, R_t, v_t.item())
         policy_grads.append(-prob_t * A_t)
         value_losses.append(

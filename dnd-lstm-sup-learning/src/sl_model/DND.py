@@ -1,5 +1,3 @@
-# # from hashlib import new
-# from operator import index
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -82,6 +80,7 @@ class DND():
             self.embedder = Embedder(self.exp_settings, device = self.device)
             learning_rate = exp_settings['embedder_learning_rate']
             self.embed_optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, self.embedder.parameters()), lr=learning_rate)
+            self.criterion = nn.CrossEntropyLoss().to(self.device)
 
         # allocate space for memories
         self.reset_memory()
@@ -91,7 +90,6 @@ class DND():
     def reset_memory(self):
         self.keys = [[]]
         self.vals = []
-        self.recall_sims = []     
         self.key_context_map = {}
         self.context_counter = 0 
         self.sorted_key_list = sorted(list(self.mapping.keys()))
@@ -115,15 +113,7 @@ class DND():
             self.save_memory(k, v)
 
     def save_memory(self, memory_key, memory_val):
-        """Save an episodic memory to the dictionary
 
-        Parameters
-        ----------
-        memory_key : a row vector
-            a DND key, used to for memory search
-        memory_val : a row vector
-            a DND value, representing the memory content
-        """
         # ----During Trial----
         # If not at end of episode return to training
         if self.encoding_off:
@@ -135,17 +125,18 @@ class DND():
             if param.requires_grad:
                 print (name, param.data)
 
-        # # Reached end of episode, different ways to update memory
-        # mem_update_boolean = self.exp_settings['kaiser_key_update']
-
         # Save full buffer per trial
         keys = self.trial_buffer
         trial_hidden_states = [keys[i] for i in range(len(keys)) if keys[i] != ()]
         # print(trial_hidden_states)
 
+        # Only save a portion of the episode (this would break the mode based version of getting a barcode)
         # trial_hidden_states = [keys[i] for i in range(len(keys)//4, len(keys), 2)]
 
         """
+        # # Reached end of episode, different ways to update memory
+        # mem_update_boolean = self.exp_settings['kaiser_key_update']
+        #
         # # Trying different versions of Kaiser Update averaging
         # if mem_update_boolean:
         #     # Update way of storing queries in self.trial_buffer
@@ -237,41 +228,44 @@ class DND():
             for idx, (embedding, context_location, _) in enumerate(trial_hidden_states):
                 context_net[idx] = context_location
 
-                # Store embeddings in slot predicted by barcode
-                old_emb = self.keys[context_location]
-                self.keys[context_location] = [torch.squeeze(embedding.data)] + old_emb
-            
+                # Store embeddings in slot predicted by barcode, first few barcodes are always a bit off from embedder so ignore them
+                if idx > self.exp_settings['pulls_per_episode']//4:
+                    old_emb = self.keys[context_location]
+                    self.keys[context_location] = [torch.squeeze(embedding.data)] + old_emb
+                
             # Find most often predicted barcode for trial and store LSTM state in that slot
             # There should ideally only be one prediction if embedder is perfect
+            # print(context_net)
             context_avg = int(st.mode(context_net)[0][0])
+            # print(context_avg, self.sorted_key_list, barcode_string)
             self.vals[context_avg] = torch.squeeze(memory_val.data)
 
         except Exception as e:
             print(e)
             pass
+        
+        # Embedding Model Loss Backprop Time
+        agent = self.embedder
+        loss_vals = [trial_hidden_states[i][2] for i in range(len(trial_hidden_states))]
+        episode_loss = torch.stack(loss_vals).mean()
+        # print("EmbLoss:", episode_loss)
+        self.embedder_loss[self.epoch_counter] += (episode_loss/(self.exp_settings['num_barcodes']**2))
 
-        # Attempt to stabilize accuracy -> Only train model after 50 epochs to let LSTM stabilize?
-        if self.epoch_counter > 50:
-            # Embedding Model Loss Backprop Time
-            agent = self.embedder
-            loss_vals = [trial_hidden_states[i][2] for i in range(len(trial_hidden_states))]
-            episode_loss = torch.stack(loss_vals).mean()
-            self.embedder_loss[self.epoch_counter] += (episode_loss/(self.exp_settings['num_barcodes']**2))
+        # Unfreeze Embedder to train
+        for name, param in agent.named_parameters():
+            if param.requires_grad:
+                print(name, param.grad)
+            param.requires_grad = True
 
-            # Unfreeze Embedder to train
-            for name, param in agent.named_parameters():
-                if param.requires_grad:
-                    print(name, param.grad)
-                param.requires_grad = True
+        self.embed_optimizer.zero_grad()
+        episode_loss.backward(retain_graph=True)
+        self.embed_optimizer.step()
+        self.embed_optimizer.zero_grad()
 
-            self.embed_optimizer.zero_grad()
-            episode_loss.backward(retain_graph=True)
-            self.embed_optimizer.step()
-
-            # Freeze Embedder until next memory retrieval
-            for name, param in agent.named_parameters():
-                # print(name, param.grad)
-                param.requires_grad = False
+        # Freeze Embedder until next memory retrieval
+        for name, param in agent.named_parameters():
+            # print(name, param.grad)
+            param.requires_grad = False
 
     def save_memory_non_embedder(self, memory_key, barcode_string, memory_val):
 
@@ -345,7 +339,7 @@ class DND():
         """
         Embedder memory version:
 
-        Takes an input hidden state (query_key) and a ground truth barcode (context_label)
+        Takes an input hidden state (query_key) and a ground truth barcode (real_label_as_string)
         Passes the query key into the embedder model to get the predicted barcode
         Uses self.key_context_map and the predicted barcode to retrieve the LSTM state stored for that barcode
 
@@ -366,14 +360,12 @@ class DND():
         # Model outputs class probabilities
         embedding, model_output = agent(query_key)
         # print("*** Getting New Memory ***")
-        # print("Raw:", model_output)
+        # print("Raw Class Prob Logits:", model_output)
         # print("Embedding:", embedding)     
 
-        # treat model as predicting a single id for a class label, based on the order in self.sorted_key_list
-
+        # Treat model as predicting a single id for a class label, based on the order in self.sorted_key_list
         # Calc Loss for single pull for updates at end of episode
-        criterion = nn.CrossEntropyLoss().to(self.device)
-        emb_loss = criterion(model_output, real_label_id)
+        emb_loss = self.criterion(model_output, real_label_id)
 
         # Freeze Embedder model until next memory retrieval
         for name, param in agent.named_parameters():
@@ -382,7 +374,7 @@ class DND():
 
         # print("*** Got New Memory ***")
 
-        # Output barcode as string for downstream use
+        # Output predicted barcode as string for downstream use
         # Get class ID number for predicted barcode
         soft = torch.softmax(model_output, dim=1)
         # print(soft)
@@ -390,9 +382,43 @@ class DND():
         # print(best_memory_id)
         # print(key_list)
         predicted_context = self.sorted_key_list[best_memory_id]
-        # print('P-CTX:', predicted_context)
-        # print('R-CTX:', real_label_as_string)
+        """
+        How to use embedding as a barcode retrieval
 
+        Situation 1:  No memories stored
+            Return empty_mem, empty_barcode
+        Situation 2:
+            memory k,v is stored
+            take embedding and do 1nn search over mem keys and return bc for key and val to lstm
+
+        How do you know what to store where
+
+
+        """
+
+
+        # if self.epoch_counter > 75:
+        #     try:
+        #         key_list = [self.keys[x][0] for x in range(
+        #             len(self.keys)) if self.keys[x] != []]
+        #         if key_list:
+        #             # print("Keys:", key_list)
+        #             similarities = compute_similarities(embedding, key_list, self.kernel)
+        #             # get the best-match memory
+        #             best_memory_val, best_memory_id_guess = self._get_memory(similarities)
+        #             for k,v in self.key_context_map.items():
+        #                 if v == best_memory_id_guess:
+        #                     emb_pred = k
+
+        #             print('---')
+        #             print('E-CTX:', emb_pred)
+        #             print('P-CTX:', predicted_context)
+        #             print('R-CTX:', real_label_as_string)
+        #             print('---')
+        #     except Exception as e:
+        #         print(e)
+        #         pass
+        
         # Task not yet seen, no stored LSTM yet
         if predicted_context not in self.key_context_map:
             self.key_context_map[predicted_context] = self.context_counter
