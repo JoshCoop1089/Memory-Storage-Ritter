@@ -90,6 +90,7 @@ class DND():
     def reset_memory(self):
         self.keys = [[]]
         self.vals = []
+        self.trial_hidden_states = []
         self.key_context_map = {}
         self.context_counter = 0 
         self.sorted_key_list = sorted(list(self.mapping.keys()))
@@ -113,6 +114,35 @@ class DND():
             self.save_memory(k, v)
 
     def save_memory(self, memory_key, memory_val):
+
+        # Save full buffer per trial
+        keys = self.trial_buffer
+        self.trial_hidden_states = [keys[i] for i in range(len(keys)) if keys[i] != ()]
+        # print(trial_hidden_states)
+
+        try:
+            # Trial buffer contained embedding,location, loss from get_memory
+            context_net = np.zeros(self.exp_settings['pulls_per_episode'])
+            for idx, (embedding, context_location, _) in enumerate(self.trial_hidden_states):
+                context_net[idx] = context_location
+
+                # Store embeddings in slot predicted by barcode, first few barcodes are always a bit off from embedder so ignore them
+                if idx > self.exp_settings['pulls_per_episode']//4:
+                    old_emb = self.keys[context_location]
+                    self.keys[context_location] = [torch.squeeze(embedding.data)] + old_emb
+                
+            # Find most often predicted barcode for trial and store LSTM state in that slot
+            # There should only be one prediction across an episode if embedder is 100% accurate
+            # print(context_net)
+            context_avg = int(st.mode(context_net)[0][0])
+            # print(context_avg, self.sorted_key_list, barcode_string)
+            self.vals[context_avg] = torch.squeeze(memory_val.data)
+
+        except Exception as e:
+            print(e)
+            pass
+    
+    def save_memory_old(self, memory_key, memory_val):
 
         # ----During Trial----
         # If not at end of episode return to training

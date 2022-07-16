@@ -111,3 +111,7 @@ print(df)
 
 print(round(4.5), round(4.49), round(4.501))
 
+a = [(1,2), (3,4), (5,6)]
+b = [x[1] for x in a]
+print(b)
+
