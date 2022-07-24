@@ -18,6 +18,7 @@ def avg_returns(dim_hidden_lstm = 0, lstm_learning_rate = 0, dim_hidden_a2c = 0,
     exp_settings['tensorboard_logging'] = False
     exp_settings['timing'] = False
     exp_settings['lstm_inputs_looped'] = True
+    exp_settings['torch_device'] = 'CPU'
 
     # Task Info
     exp_settings['kernel'] = 'cosine'           #cosine, l2
@@ -29,9 +30,9 @@ def avg_returns(dim_hidden_lstm = 0, lstm_learning_rate = 0, dim_hidden_a2c = 0,
     # 1000 epochs with 10 barcodes == 100k episodes
     # Ritter returns were averaging ~0.35 at this point in training
     exp_settings['epochs'] = 1000
-    exp_settings['num_arms'] = 4
-    exp_settings['barcode_size'] = 4
-    exp_settings['num_barcodes'] = 4
+    exp_settings['num_arms'] = 5
+    exp_settings['barcode_size'] = 5
+    exp_settings['num_barcodes'] = 5
     exp_settings['pulls_per_episode'] = 10
     exp_settings['perfect_info'] = False
     exp_settings['reset_barcodes_per_epoch'] = False
@@ -135,7 +136,7 @@ optimizer = BayesianOptimization(
 # load_logs(optimizer, logs=[
 #           "./dnd-lstm-sup-learning/src/logs_4_1k_epochs.json"])
 logger = JSONLogger(
-    path="./dnd-lstm-sup-learning/src/logs_4_1k_epochs_loop.json", reset=False)
+    path="./dnd-lstm-sup-learning/src/logs_5_1k_epochs_loop.json", reset=False)
 
 # 10 arms/barcodes/pulls
 # load_logs(optimizer, logs=["./dnd-lstm-sup-learning/src/logs_10.json"])
@@ -179,8 +180,8 @@ print("New optimizer is now aware of {} points.".format(len(optimizer.space)))
 # print("New optimizer is now aware of {} points.".format(len(optimizer.space)))
 
 optimizer.maximize(
-    init_points=10,
-    n_iter=30,
+    init_points=24,
+    n_iter=48,
 )
 
 # # # for i, res in enumerate(optimizer.res):

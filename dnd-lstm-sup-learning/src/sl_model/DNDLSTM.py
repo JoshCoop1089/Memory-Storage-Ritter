@@ -48,7 +48,7 @@ class DNDLSTM(nn.Module):
             elif 'bias' in name:
                 torch.nn.init.constant_(wts, 0)
 
-    def forward(self, obs_bar_reward, barcode_string, barcode_tensor, h, c):
+    def forward(self, obs_bar_reward, barcode_string, barcode_tensor, barcode_id, h, c):
 
         forward_start = time.perf_counter()
 
@@ -112,7 +112,7 @@ class DNDLSTM(nn.Module):
             # print("B-Retrieve:\n", self.dnd.embedder.e2c.weight)
     
             # Query Memory (hidden state passed into embedder, barcode_string used for embedder loss function)
-            mem, predicted_barcode = self.dnd.get_memory(h, barcode_string)
+            mem, predicted_barcode = self.dnd.get_memory(h, barcode_string, barcode_id)
             m_t = mem.tanh()
 
             # print("A-Retrieve:\n", self.a2c.critic.weight)
@@ -206,8 +206,7 @@ class DNDLSTM(nn.Module):
 
     def get_init_states(self, scale=.1):
         h_0 = torch.randn(1, self.dim_hidden_lstm, device = self.device) * scale
-        c_0 = torch.randn(1, self.dim_hidden_lstm,
-                          device=self.device) * scale
+        c_0 = torch.randn(1, self.dim_hidden_lstm, device = self.device) * scale
         return h_0, c_0
 
     def flush_trial_buffer(self):

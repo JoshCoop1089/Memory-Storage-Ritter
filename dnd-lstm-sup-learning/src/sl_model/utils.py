@@ -75,7 +75,7 @@ def get_reward_from_assumed_barcode(a_t, assumed_barcode, mapping, device, perfe
         best_arm = torch.tensor(mapping[assumed_barcode], device = device)
         # print(a_t.item(), best_arm)
         if perfect_info == False:
-            if torch.eq(a_t, best_arm):
+            if torch.equal(a_t, best_arm):
                 reward = float(np.random.random() < 0.9)
             else:
                 reward = float(np.random.random() < 0.1)
@@ -83,7 +83,7 @@ def get_reward_from_assumed_barcode(a_t, assumed_barcode, mapping, device, perfe
         # Deterministic Arm Rewards (for debugging purposes)
         # Make sure to change generate_one_episode in ContextBandits.py as well
         else:  # perfect_info == True
-            reward = float(torch.eq(a_t, best_arm))
+            reward = float(torch.equal(a_t, best_arm))
 
     # Empty barcode returns for the first episode of an epoch because there is nothing in memory
     except Exception as e:

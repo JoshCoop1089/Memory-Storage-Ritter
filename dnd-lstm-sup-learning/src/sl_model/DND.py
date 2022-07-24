@@ -115,6 +115,26 @@ class DND():
 
     def save_memory(self, memory_key, memory_val):
 
+        try:
+            test = self.keys[0][0]
+        except IndexError:
+            self.keys.pop(0)
+        # Save every embedding of the trial
+        keys = self.trial_buffer
+        self.trial_hidden_states = [keys[i] for i in range(len(keys)) if keys[i] != () and i > len(keys)//4]
+        # print(trial_hidden_states)
+
+        for embedding, context_location, _ in self.trial_hidden_states:
+            self.keys.append([torch.squeeze(embedding.data), context_location])
+            self.vals.append(torch.squeeze(memory_val.data))
+
+        while len(self.keys) > self.dict_len:
+            self.keys.pop(0)
+            self.vals.pop(0)
+        return
+
+    def save_memory1(self, memory_key, memory_val):
+
         # Save full buffer per trial
         keys = self.trial_buffer
         self.trial_hidden_states = [keys[i] for i in range(len(keys)) if keys[i] != ()]
@@ -365,7 +385,7 @@ class DND():
         # print("Key List Short:", self.keys, len(self.keys))
         return
         
-    def get_memory(self, query_key, real_label_as_string):
+    def get_memory(self, query_key, real_label_as_string, real_label_id):
         """
         Embedder memory version:
 
@@ -376,8 +396,8 @@ class DND():
         Also handles the embedder model updates, and buffering information for the save_memory function at the end of the episode
         """
 
-        # Get class ID number for real barcode
-        real_label_id = torch.tensor([self.sorted_key_list.index(real_label_as_string)], dtype = torch.long, device = self.device)
+        # # Get class ID number for real barcode
+        # real_label_id = torch.tensor([self.sorted_key_list.index(real_label_as_string)], dtype = torch.long, device = self.device)
 
         # Embedding Model Testing Ground
         agent = self.embedder
@@ -412,6 +432,26 @@ class DND():
         # print(best_memory_id)
         # print(key_list)
         predicted_context = self.sorted_key_list[best_memory_id]
+
+        # Task not yet seen, no stored LSTM yet
+        if predicted_context not in self.key_context_map:
+            self.key_context_map[predicted_context] = self.context_counter
+            context_location = self.context_counter
+            # self.keys.append([])
+            # self.vals.append(0)
+            self.context_counter += 1
+            # best_memory_val = _empty_memory(
+            #     self.hidden_lstm_dim, device=self.device)
+
+        # Task seen before, get LSTM attached to task
+        else:
+            context_location = self.key_context_map[predicted_context]
+            # best_memory_val = self.vals[context_location]
+
+            # # Task was ID'd in this epoch already, but there hasn't been an LSTM stored for it yet
+            # if type(best_memory_val) is int:
+            #     best_memory_val = _empty_memory(self.hidden_lstm_dim, device = self.device)
+
         """
         How to use embedding as a barcode retrieval
 
@@ -423,50 +463,43 @@ class DND():
 
         How do you know what to store where
 
+        Go back to only using quarter of embeddings, skipping every other, to put into memory, attached to current lstm
+        Get mem now has two purposes, identifying the loss based on groundtruth, and searching the memory with the embedding
+
+        Do away with dedicated task/memslot mapping for now, just store memories
+
+        With 4a/4bc/10p -> 160 pulls per epoch, cut off first quarter = 120, take every other = 60 max memories per epoch in self.keys
 
         """
 
+        try:
+            key_list = [self.keys[x][0] for x in range(
+                len(self.keys)) if self.keys[x] != []]
 
-        # if self.epoch_counter > 75:
-        #     try:
-        #         key_list = [self.keys[x][0] for x in range(
-        #             len(self.keys)) if self.keys[x] != []]
-        #         if key_list:
-        #             # print("Keys:", key_list)
-        #             similarities = compute_similarities(embedding, key_list, self.kernel)
-        #             # get the best-match memory
-        #             best_memory_val, best_memory_id_guess = self._get_memory(similarities)
-        #             for k,v in self.key_context_map.items():
-        #                 if v == best_memory_id_guess:
-        #                     emb_pred = k
+            # Something is stored in memory
+            if key_list:
+                # print("Keys:", key_list)
+                similarities = compute_similarities(embedding, key_list, self.kernel)
+                # get the best-match memory
+                best_memory_val, best_memory_id_guess = self._get_memory(similarities)
+                # for k,v in self.key_context_map.items():
+                #     if v == best_memory_id_guess:
+                #         emb_pred = k
 
-        #             print('---')
-        #             print('E-CTX:', emb_pred)
-        #             print('P-CTX:', predicted_context)
-        #             print('R-CTX:', real_label_as_string)
-        #             print('---')
-        #     except Exception as e:
-        #         print(e)
-        #         pass
+                # print('---')
+                # print('Search:\t', emb_pred)
+                # print('Model:\t', predicted_context)
+                # print('Real:\t', real_label_as_string[0])
+                # print('---')
+            
+            # If nothing is stored in memory yet, return 0's
+            else:
+                self.trial_buffer.append((embedding, context_location, emb_loss))
+                return _empty_memory(self.hidden_lstm_dim, device=self.device), _empty_barcode(self.exp_settings['barcode_size'])
+        except Exception as e:
+            print(e)
+            pass
         
-        # Task not yet seen, no stored LSTM yet
-        if predicted_context not in self.key_context_map:
-            self.key_context_map[predicted_context] = self.context_counter
-            context_location = self.context_counter
-            self.keys.append([])
-            self.vals.append(0)
-            self.context_counter += 1
-            best_memory_val = _empty_memory(
-                self.hidden_lstm_dim, device=self.device)
-
-        # Task seen before, get LSTM attached to task
-        else:
-            context_location = self.key_context_map[predicted_context]
-            best_memory_val = self.vals[context_location]
-
-            # Task was ID'd in this epoch already, but there hasn't been an LSTM stored for it yet
-            if type(best_memory_val) is int:
-                best_memory_val = _empty_memory(self.hidden_lstm_dim, device = self.device)
 
         # Store embedding and predicted class label memory index in trial_buffer
         self.trial_buffer.append((embedding, context_location, emb_loss))

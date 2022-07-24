@@ -100,14 +100,15 @@ class ContextualBandit():
         if self.reset_arms_per_epoch:
             self.epoch_mapping = self.map_arms_to_barcodes(self.epoch_mapping)
 
-        observation_p1, reward_p1, barcode_p1, barcode_strings = self.generate_trials_info(self.epoch_mapping)
+        observation_p1, reward_p1, barcode_p1, barcode_strings, barcode_id = self.generate_trials_info(self.epoch_mapping)
         obs_barcodes_rewards = np.dstack([observation_p1, barcode_p1, reward_p1])
 
         # to pytorch form
         if to_torch:
             obs_barcodes_rewards = to_pth(obs_barcodes_rewards).to(self.device)
             barcode_tensors = to_pth(barcode_p1).to(self.device)
-        return obs_barcodes_rewards, self.epoch_mapping, barcode_strings, barcode_tensors
+            barcode_ids = to_pth(barcode_id, pth_dtype=torch.long).to(self.device)
+        return obs_barcodes_rewards, self.epoch_mapping, barcode_strings, barcode_tensors, barcode_ids
 
     def generate_barcode_mapping(self):
         barcode_bag = set()
@@ -153,11 +154,10 @@ class ContextualBandit():
         """
         LSTM Input Format:
         Trial is a sequence of X one hot encoded pulls indicating the pulled arm
-
-        [100, barcode2, 0] would be one pull in one trial for barcode2
+        [1001010] -> human reads this as [100, barcode2, 0] would be one pull in one trial for barcode2
         this would be a pull on arm0, and based on the mapping of barcode2, returns a reward of 0
         
-        one episode is a sequence of 10 trials drawn from barcode bag
+        one episode is a sequence of 10 trials drawn for a single barcode instance from barcode bag
         one epoch is the full contents of barcode bag
         """
 
@@ -168,16 +168,18 @@ class ContextualBandit():
             for _ in range(self.num_barcodes):
                 trial_barcode_bag.append(barcode)
         random.shuffle(trial_barcode_bag)
+        self.sorted_bcs = sorted(list(mapping.keys()))
 
         observations = np.zeros((self.num_barcodes**2, self.pulls_per_episode, self.num_arms))
         rewards = np.zeros((self.num_barcodes**2, self.pulls_per_episode, 1))
         barcodes = np.zeros((self.num_barcodes**2, self.pulls_per_episode, self.barcode_size))
         barcodes_strings = np.zeros((self.num_barcodes**2, self.pulls_per_episode, 1), dtype=object)
+        barcodes_id = np.zeros((self.num_barcodes**2, 1))
 
         for episode_num, barcode in enumerate(trial_barcode_bag):
-            observations[episode_num], rewards[episode_num], barcodes[episode_num], barcodes_strings[episode_num] = self.generate_one_episode(barcode, mapping)
+            observations[episode_num], rewards[episode_num], barcodes[episode_num], barcodes_strings[episode_num], barcodes_id[episode_num] = self.generate_one_episode(barcode, mapping)
 
-        return observations, rewards, barcodes, barcodes_strings
+        return observations, rewards, barcodes, barcodes_strings, barcodes_id
 
     def generate_one_episode(self, barcode, mapping):
         """
@@ -190,7 +192,8 @@ class ContextualBandit():
             trial_pulls (Numpy Array): Contains all distinct arm pulls in order
             trial_rewards (Numpy Array): All rewards for arm pulls under input barcode
             bar_ar (Numpy Array): Input barcode tiled to match length of trial pulls
-            bar_strings (Numpy Array): Input barcode as string for easier referencing later in program            
+            bar_strings (Numpy Array): Input barcode as string for easier referencing later in program   
+            bar_id (Numpy Array): Sorted ID's for Embedder loss calculations         
         """
         # Generate arm pulling sequence for single episode
         # Creates an Arms X Pulls matrix, using np.eye to onehotencode arm pulls
@@ -221,7 +224,7 @@ class ContextualBandit():
         # After generation of reward, use noise to obscure input for first x pulls of trial
         # Unsure how to implement this, just random generate a one hot encode, make more than one input, keep binary?
         
-        # # Tile the barcode for all pulls in the episode
+        # Tile the barcode for all pulls in the episode
         bar_strings = np.zeros((self.pulls_per_episode, 1), dtype = object)
         bar_ar = np.zeros((self.pulls_per_episode, self.barcode_size))
         for num in range(self.pulls_per_episode):
@@ -229,7 +232,9 @@ class ContextualBandit():
             for id, val in enumerate(barcode):
                 bar_ar[num][id] = int(val)
 
-        return trial_pulls, trial_rewards, bar_ar, bar_strings
+        bar_id = self.sorted_bcs.index(barcode)
+
+        return trial_pulls, trial_rewards, bar_ar, bar_strings, bar_id
 
 def to_pth(np_array, pth_dtype=torch.FloatTensor):
     return torch.as_tensor(np_array).type(pth_dtype)
