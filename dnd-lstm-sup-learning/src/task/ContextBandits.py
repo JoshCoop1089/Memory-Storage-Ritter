@@ -163,11 +163,24 @@ class ContextualBandit():
 
         # Create the trial sample bag with num_barcode instances of each unique barcode
         # 4 unique barcodes -> 16 total barcodes in bag, 4 copies of each unique barcode
+
+        # # Ishani's Grouping method for unsup learning
+        # trial_barcode_bag = []
+        # for i in range(self.num_barcodes):
+        #     temp_list = []
+        #     for barcode in mapping:
+        #         temp_list.append(barcode)
+        #     random.shuffle(temp_list)
+        #     for k in temp_list:
+        #         trial_barcode_bag.append(k)
+
+        # Josh's general randomization method
         trial_barcode_bag = []
         for barcode in mapping:
             for _ in range(self.num_barcodes):
                 trial_barcode_bag.append(barcode)
         random.shuffle(trial_barcode_bag)
+
         self.sorted_bcs = sorted(list(mapping.keys()))
 
         observations = np.zeros((self.num_barcodes**2, self.pulls_per_episode, self.num_arms))

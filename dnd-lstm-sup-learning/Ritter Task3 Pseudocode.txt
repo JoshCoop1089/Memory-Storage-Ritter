@@ -1,0 +1,37 @@
+---- Task Setup  ----
+
+assume 400 contexts of size 20
+
+create bag of 400 unique contexts
+shuffle the context list
+
+split bag in half
+assign half to low prob
+assign half to high prob
+
+create reward_accumulator with context as key and 0 as value
+create reward dict with context as key and 0.1 or 0.9 as value
+
+create duplicates bag
+5x copies of all low prob bcs
+5x copies of all high prob bcs
+
+shuffle the duplicate bags individually
+
+one episode is a random draw w/o replacement from both bags
+
+randomize the location of each prob and create inputs for epoch
+for low,high in zip(low_dup, high_dup):
+	episode = np.zeros((2,context_size))
+	loc = random.randint(0,2)
+	episode[loc] = low
+	episode[1-loc] = high
+		
+turn episode_list in tensors of size [epoch, episode, 2*context_size]
+	
+output = episode_list, episode_list as strings, reward_mapping, reward_accumulator
+	
+---- LSTM ----
+take episode list and choose either left or right context to check against memory
+loc = random.randint(0,2)
+agent(episode_list[episode][loc]

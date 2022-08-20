@@ -144,6 +144,7 @@ def run_experiment_sl(exp_settings):
     # Results for TB or Graphing
     log_return = np.zeros(n_epochs,)
     log_embedder_accuracy = np.zeros(n_epochs,)
+    log_memory_accuracy = np.zeros(n_epochs,)
     log_loss_value = np.zeros(n_epochs,)
     log_loss_policy = np.zeros(n_epochs,)
     log_loss_total = np.zeros(n_epochs,)
@@ -189,6 +190,7 @@ def run_experiment_sl(exp_settings):
 
             # prealloc
             embedder_accuracy = 0
+            memory_accuracy = 0
             cumulative_reward = 0
             probs, rewards, values, entropies = [], [], [], []
             h_t, c_t = agent.get_init_states()
@@ -238,7 +240,7 @@ def run_experiment_sl(exp_settings):
                     output_t, cache = agent(input_to_lstm, barcode_strings[m][0], 
                                             barcode_tensors[m], barcode_id[m],
                                             h_t, c_t)
-                    a_t, assumed_barcode_string, prob_a_t, v_t, entropy, h_t, c_t = output_t
+                    a_t, assumed_barcode_string, mem_predicted_bc, prob_a_t, v_t, entropy, h_t, c_t = output_t
                     _, _, _, _, _, timings = cache
 
                     pull_overhead_start = time.perf_counter()
@@ -246,18 +248,18 @@ def run_experiment_sl(exp_settings):
 
                     # Ritter uses BC from memory, Embedding using bc from input
                     real_bc = barcode_strings[m][0][0]
-                    if exp_settings['mem_store'] == 'embedding' and  assumed_barcode_string != '0'*barcode_size:
-                        reward_bc = real_bc 
-                    else:
-                        reward_bc = assumed_barcode_string
+                    # if exp_settings['mem_store'] == 'embedding' and  assumed_barcode_string != '0'*barcode_size:
+                    #     reward_bc = real_bc 
+                    # else:
+                    #     reward_bc = assumed_barcode_string
 
-                    r_t = get_reward_from_assumed_barcode(a_t, reward_bc, 
+                    r_t = get_reward_from_assumed_barcode(a_t, mem_predicted_bc, 
                                                             epoch_mapping, device, perfect_info)
 
                     # Does the predicted context match the actual context?
-                    # print(real_bc, assumed_barcode_string)
-                    match = int(real_bc == assumed_barcode_string)
-                    embedder_accuracy += match
+                    # print(real_bc, assumed_barcode_string, mem_predicted_bc)
+                    embedder_accuracy += int(real_bc == assumed_barcode_string)
+                    memory_accuracy += int(real_bc == mem_predicted_bc)
 
                     # # Confusion Matrix for Embedder Predictions
                     # if exp_settings['mem_store'] == 'embedding' and i == n_epochs - 1:
@@ -311,7 +313,8 @@ def run_experiment_sl(exp_settings):
             # Embedder Loss for Episode
             if exp_settings['mem_store'] == 'embedding':
                 a_dnd = agent.dnd
-                loss_vals = [x[2] for x in a_dnd.trial_hidden_states]
+                loss_vals = [x[2] for x in a_dnd.trial_buffer]
+                # loss_vals = [x[2] for x in a_dnd.trial_hidden_states]
                 episode_loss = torch.stack(loss_vals).mean()
                 # print("EmbLoss:", episode_loss)
                 a_dnd.embedder_loss[i] += (episode_loss/episodes_per_epoch)
@@ -329,7 +332,7 @@ def run_experiment_sl(exp_settings):
             # print("Before-emb o:\n", agent.dnd.embedder.e2c.weight)
 
             # Embedder Backprop
-            if exp_settings['mem_store'] == 'embedding':
+            if exp_settings['mem_store'] == 'embedding' and i > n_epochs//2:
                 # Unfreeze Embedder
                 for name, param in a_dnd.embedder.named_parameters():
                     if param.requires_grad:
@@ -388,6 +391,7 @@ def run_experiment_sl(exp_settings):
            
             # Updating avg accuracy per episode
             log_embedder_accuracy[i] += torch.div(embedder_accuracy, (episodes_per_epoch*pulls_per_episode))
+            log_memory_accuracy[i] += torch.div(memory_accuracy, (episodes_per_epoch*pulls_per_episode))
             
             # Loss Logging
             log_loss_value[i] += torch.div(loss_value, episodes_per_epoch)
@@ -407,9 +411,9 @@ def run_experiment_sl(exp_settings):
         # Tensorboard Stuff
         tb_start = time.perf_counter() 
         if exp_settings['tensorboard_logging'] and i%5 == 4:
-            tb.add_scalar("LSTM Loss_Value", log_loss_value[i], i)
+            tb.add_scalar("LSTM Loss_All", log_loss_total[i], i)
             tb.add_scalar("LSTM Loss_Policy", log_loss_policy[i], i)
-            tb.add_scalar("LSTM Total Loss", log_loss_total[i], i)
+            tb.add_scalar("LSTM Loss_Value", log_loss_value[i], i)
             tb.add_scalar("LSTM Returns", log_return[i], i)
 
             # for name, weight in agent.named_parameters():
@@ -423,8 +427,10 @@ def run_experiment_sl(exp_settings):
             if exp_settings['mem_store'] == 'embedding':
                 tb.add_scalar("Embedder Loss",
                             agent.dnd.embedder_loss[i], i)
-                tb.add_scalar("Barcode Prediction Accuracy",
+                tb.add_scalar("Accuracy Embedder Model",
                                 log_embedder_accuracy[i], i)
+                tb.add_scalar("Accuracy Memory BC Prediction",
+                                log_memory_accuracy[i], i)
                 # for name, weight in agent.dnd.embedder.named_parameters():
                 #     tb.add_histogram(name, weight, i)
                 #     try:
@@ -445,12 +451,15 @@ def run_experiment_sl(exp_settings):
                 (i, log_return[i], log_loss_value[i], log_loss_policy[i], log_loss_total[i], run_time[i])
             )
             # Embedder Accuracy over the last 10 epochs
-            if exp_settings['mem_store'] == 'embedding':
-                if  i > 10:
-                    avg_acc = log_embedder_accuracy[i-9:i+1].mean()
-                else:
-                    avg_acc = log_embedder_accuracy[:i+1].mean()
-                print("Embedder Accuracy: ", round(avg_acc, 4))
+            # if exp_settings['mem_store'] == 'embedding':
+            if  i > 10:
+                avg_acc = log_embedder_accuracy[i-9:i+1].mean()
+                avg_acc_mem = log_memory_accuracy[i-9:i+1].mean()
+            else:
+                avg_acc = log_embedder_accuracy[:i+1].mean()
+                avg_acc_mem = log_memory_accuracy[:i+1].mean()
+            print("Embedder Accuracy: ", round(avg_acc, 4), end = ' | ')
+            print("Memory Accuracy: ", round(avg_acc_mem, 4))
     
     # Final Results
     # plot_grad_flow(agent.named_parameters())
@@ -500,14 +509,14 @@ def run_experiment_sl(exp_settings):
         time_out = {key:(round(1000*time_out[key][0], 2), round(time_out[key][1], 1)) for key in time_out}
         timing_df = pd.DataFrame.from_dict(time_out, orient='index', columns = ['Avg Time (ms)', 'Percent of Total']).sort_index()
 
-        print("Individual Part Avg Times:\n")
+        print("\nIndividual Part Avg Times:\n")
         print(timing_df)
     print("- - - "*3)
 
     # Additional returns to graph out of this file
     keys, prediction_mapping = agent.get_all_mems_embedder()
 
-    logs = log_return, log_loss_value, log_loss_policy, log_loss_total, log_embedder_accuracy, agent.dnd.embedder_loss
+    logs = log_return, log_loss_value, log_loss_policy, log_loss_total, log_embedder_accuracy, agent.dnd.embedder_loss, log_memory_accuracy
     key_data = keys, prediction_mapping, epoch_mapping, barcode_data
 
     if exp_settings['tensorboard_logging']:
@@ -678,6 +687,8 @@ if __name__  == '__main__':
 
         if mem_store == 'context':
             exp_settings['torch_device'] = 'CPU'
+
+            # Smaller network works for Ritter well, but has early learning peak climb
             if num_arms != 10:
                 exp_settings['dim_hidden_a2c'] = int(2**6.909)        #120
                 exp_settings['dim_hidden_lstm'] = int(2**5.302)       #39
@@ -692,6 +703,7 @@ if __name__  == '__main__':
                 exp_settings['lstm_learning_rate'] = 10**-2.852         #1.4e-3
                 exp_settings['value_error_coef'] = 0.2767
             
+        # Need to do more Bayes passes to find if this can be made better for embedder
         elif mem_store == 'embedding':
             exp_settings['torch_device'] = 'GPU'
             exp_settings['dim_hidden_a2c'] = int(2**8.644)        #400
@@ -728,7 +740,7 @@ if __name__  == '__main__':
     exp_settings['barcode_size'] = 5
     exp_settings['num_barcodes'] = 5
     exp_settings['pulls_per_episode'] = 10
-    exp_settings['epochs'] = 100
+    exp_settings['epochs'] = 3000
 
     # Data Logging
     exp_settings['tensorboard_logging'] = False
@@ -747,9 +759,17 @@ if __name__  == '__main__':
             tot_rets = np.zeros(exp_settings['epochs'])
             exp_settings = get_hyperparams(mem_store, num_arms, exp_settings)
             for i in range(num_repeats):
+                # exp_settings['torch_device'] = 'GPU'
+                # exp_settings['dim_hidden_a2c'] = int(2**8.644)        #400
+                # exp_settings['dim_hidden_lstm'] = int(2**8.655)       #403
+                # exp_settings['entropy_error_coef'] = 0.0391
+                # exp_settings['lstm_learning_rate'] = 10**-3.332       #4.66e-4
+                # exp_settings['value_error_coef'] = 0.62
+                # exp_settings['num_barcodes'] = 6
+
                 print(f"\nNew Run --> Iteration: {i} | Type: {mem_store} | Device: {exp_settings['torch_device']}")
                 logs, key_data = run_experiment_sl(exp_settings)
-                log_return, log_loss_value, log_loss_policy, log_loss_total, log_embedder_accuracy, embedder_loss = logs
+                log_return, log_loss_value, log_loss_policy, log_loss_total, log_embedder_accuracy, embedder_loss, log_memory_accuracy = logs
                 keys, prediction_mapping, epoch_mapping, barcode_data = key_data 
                 tot_rets += log_return/num_repeats
                 # print(tot_rets)
@@ -830,6 +850,12 @@ if __name__  == '__main__':
         smoothed_accuracy = pd.Series.rolling(pd.Series(log_embedder_accuracy), 10).mean()
         smoothed_accuracy = [elem for elem in smoothed_accuracy]
         axs[0].plot(smoothed_accuracy, label=f"Embedding Accuracy")
+
+        # Memory Accuracy
+        smoothed_mem_accuracy = pd.Series.rolling(pd.Series(log_memory_accuracy), 10).mean()
+        smoothed_mem_accuracy = [elem for elem in smoothed_mem_accuracy]
+        axs[0].plot(smoothed_mem_accuracy, label=f"Memory Accuracy")
+
         axs[0].set_ylabel('Accuracy')
         axs[0].set_xlabel('Epoch')
         axs[0].set_title('Embedding Model Barcode Prediction Accuracy')

@@ -13,13 +13,26 @@ class Embedder(nn.Module):
         self.input_dim = exp_settings['dim_hidden_lstm']
         embedding_size = exp_settings['embedding_size']
         self.num_barcodes = exp_settings['num_barcodes']
+        self.num_arms = exp_settings['num_arms']
 
         # Basic Layers
         self.h2m = nn.Linear(self.input_dim, 2*embedding_size, bias=bias, device = device)
+        self.e2c = nn.Linear(2*embedding_size, self.num_arms, bias=bias, device = device)
+        # self.e2c = nn.Linear(embedding_size, self.num_barcodes, bias=bias, device = device)
+
+        # Blow up and shrink down
+        # self.h2m = nn.Linear(self.input_dim, 2*embedding_size, bias=bias, device = device)
         # self.mdrope = nn.Dropout(0.5)
-        # self.m2e = nn.Linear(2*embedding_size, 1*embedding_size, bias=bias)
+        # self.m2e = nn.Linear(2*embedding_size, 1*embedding_size, bias=bias, device = device)
         # self.edropc = nn.Dropout(0.5)
-        self.e2c = nn.Linear(2*embedding_size, self.num_barcodes, bias=bias, device = device)
+        # self.e2c = nn.Linear(1*embedding_size, self.num_barcodes, bias=bias, device = device)
+
+        # Shrinking from LSTM Attempt
+        # self.h2m = nn.Linear(self.input_dim, embedding_size//2, bias=bias, device = device)
+        # self.mdrope = nn.Dropout(0.5)
+        # self.m2e = nn.Linear(embedding_size//2, embedding_size//4, bias=bias, device = device)
+        # # self.edropc = nn.Dropout(0.5)
+        # self.e2c = nn.Linear(embedding_size//4, self.num_barcodes, bias=bias, device = device)
 
         # init
         self.reset_parameter()
@@ -33,6 +46,9 @@ class Embedder(nn.Module):
         # x1 = self.edropc(x)
         predicted_context = self.e2c(x)
         return embedding, predicted_context
+
+    def forward_predict_bc(self, embedding):
+        return self.e2c(embedding)
 
     def reset_parameter(self):
         for name, wts in self.named_parameters():

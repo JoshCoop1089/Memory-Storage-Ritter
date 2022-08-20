@@ -112,7 +112,7 @@ class DNDLSTM(nn.Module):
             # print("B-Retrieve:\n", self.dnd.embedder.e2c.weight)
     
             # Query Memory (hidden state passed into embedder, barcode_string used for embedder loss function)
-            mem, predicted_barcode = self.dnd.get_memory(h, barcode_string, barcode_id)
+            mem, predicted_barcode, mem_predicted_bc = self.dnd.get_memory(h, barcode_string, barcode_id)
             m_t = mem.tanh()
 
             # print("A-Retrieve:\n", self.a2c.critic.weight)
@@ -125,7 +125,7 @@ class DNDLSTM(nn.Module):
                 # print(name, param.data)
 
         else:
-            mem, predicted_barcode = self.dnd.get_memory_non_embedder(q_t)
+            mem, predicted_barcode, mem_predicted_bc = self.dnd.get_memory_non_embedder(q_t)
             m_t = mem.tanh()
             # print("A:", self.a2c.critic.weight.data, self.a2c.critic.weight.grad)
         
@@ -181,7 +181,7 @@ class DNDLSTM(nn.Module):
                         "1d. Get_mem": forward_get_mem, "1e. Action": forward_action, "1f. Save_mem": forward_save}
         
         # fetch activity
-        output = (a_t, predicted_barcode, prob_a_t, v_t, entropy, h_t, c_t)
+        output = (a_t, predicted_barcode, mem_predicted_bc, prob_a_t, v_t, entropy, h_t, c_t)
         cache = (f_t, i_t, o_t, r_t, m_t, timings)
 
         return output, cache
