@@ -103,15 +103,31 @@
 #     c[k] = c[k] + b[k]
 # print(c)
 
-from operator import index
-import pandas as pd
-a = {"a":(1,2), "b":(2,3), "c":(3,4)}
-df = pd.DataFrame.from_dict(a, orient = 'index')
-print(df)
+# from operator import index
+# import pandas as pd
+# a = {"a":(1,2), "b":(2,3), "c":(3,4)}
+# df = pd.DataFrame.from_dict(a, orient = 'index')
+# print(df)
 
-print(round(4.5), round(4.49), round(4.501))
+# print(round(4.5), round(4.49), round(4.501))
 
-a = [(1,2), (3,4), (5,6)]
-b = [x[1] for x in a]
-print(b)
+# a = [(1,2), (3,4), (5,6)]
+# b = [x[1] for x in a]
+# print(b)
+import numpy as np
+import torch
+a = torch.tensor([1,0,1,1,1], dtype=float)
+b = [0,0,1,0,1]
+c = [0,0,1,0,0]
+idx = torch.multinomial(a, 2)
+mask = torch.randint_like(idx, 0, 2)
+# a2 = np.array(a)
+print(a, idx, mask)
+for idx1, mask1 in zip(idx, mask):
+    a[idx1] *= mask1 
+print(a, idx, mask)
 
+0, 1 -> 1
+0, 0 -> 0
+1, 1 -> 0
+1, 0 -> 1

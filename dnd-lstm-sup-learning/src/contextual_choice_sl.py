@@ -60,6 +60,9 @@ def run_experiment_sl(exp_settings):
         seed_val = 0
         torch.manual_seed(seed_val)
         np.random.seed(seed_val)
+
+    n_epochs = exp_settings['epochs']
+    agent_input = exp_settings['agent_input']
    
     '''init task'''
     # input/output/hidden/memory dim
@@ -81,8 +84,8 @@ def run_experiment_sl(exp_settings):
     perfect_info = exp_settings['perfect_info']
 
     # Make a percent of observed pulls useless for prediction by obscuring the barcode
-    noise_percent = exp_settings['noise_percent']
-    noise_split = int(pulls_per_episode * noise_percent)
+    noise_epoch_start = n_epochs - exp_settings['noise_eval_epochs']
+    noise_barcode_flip_locs = int(exp_settings['noise_percent']*barcode_size)
 
     # Task Choice
     if exp_settings['task_version'] == 'bandit':
@@ -93,7 +96,7 @@ def run_experiment_sl(exp_settings):
             pulls_per_episode, episodes_per_epoch,
             num_arms, num_barcodes, barcode_size,
             reset_barcodes_per_epoch, reset_arms_per_epoch,
-            noise_split, device, perfect_info)
+            0, device, perfect_info)
 
         # LSTM Chooses which arm to pull
         dim_output_lstm = num_arms
@@ -103,7 +106,7 @@ def run_experiment_sl(exp_settings):
 
     elif exp_settings['task_version'] == 'original':
         task = ContextualChoice(
-            num_arms, num_barcodes, noise_split)
+            num_arms, num_barcodes, 0.5)
         episodes_per_epoch = 2*num_barcodes
         epoch_mapping = {}
 
@@ -112,10 +115,6 @@ def run_experiment_sl(exp_settings):
         dict_len = 50
         value_weight = 1
         entropy_weight = 0
-
-    '''init model'''
-    n_epochs = exp_settings['epochs']
-    agent_input = exp_settings['agent_input']
     
     # Input to LSTM is only observation + reward
     if agent_input == 'obs':
@@ -211,6 +210,29 @@ def run_experiment_sl(exp_settings):
             # Clearing the per trial hidden state buffer
             agent.flush_trial_buffer()
 
+            # Noisy Barcodes are constant across an episode if needed
+            if i >= noise_epoch_start:
+                action = observations_barcodes_rewards[m][0][0:num_arms].view(1,-1)
+                noisy_bc = observations_barcodes_rewards[m][0][num_arms:-1].view(1,-1)
+                reward = observations_barcodes_rewards[m][0][-1].view(
+                    1, -1)
+                
+                # What indicies need to be randomized?
+                idx = torch.multinomial(noisy_bc, noise_barcode_flip_locs)
+
+                # Do we flip the value at that index?
+                mask = torch.randint_like(idx, 0, 2)
+
+                # Applying the mask to the barcode
+                # print(f"BC Before: {noisy_bc}")
+                for idx1, mask1 in zip(idx[0], mask[0]):
+                    noisy_bc[0][idx1] = float(int(torch.ne(mask1,noisy_bc[0][idx1])))
+                # print(f"BC After: {noisy_bc}")
+
+                # Remake the input
+                input_to_lstm = torch.cat(
+                    (action, noisy_bc, reward.view(1,1)), dim=1)
+
             # loop over time, for one training example
             for t in range(pulls_per_episode):
                 
@@ -222,24 +244,13 @@ def run_experiment_sl(exp_settings):
                 if t == pulls_per_episode-1 and m < episodes_per_epoch:
                     agent.turn_on_encoding()
 
-                
                 if exp_settings['task_version'] == 'bandit':
                     # Looping LSTM inputs means only the first pull of episode is defined outside model
                     if exp_settings['lstm_inputs_looped']:
-                        if t == 0:
-                            input_to_lstm = observations_barcodes_rewards[m]
 
-                            # Noisy Barcodes affecting the first part of an episode need to change the incoming data
-                            if exp_settings['obs_begin_noisy'] and \
-                                ((not exp_settings['train_with_noise'] and i >= n_epochs - exp_settings['noise_eval_epochs']) or\
-                                    exp_settings['train_with_noise']):
-                                    action = observations_barcodes_rewards[m][0][0:num_arms].view(1,-1)
-                                    barcode = observations_barcodes_rewards[m][0][num_arms:-1].view(1,-1)
-                                    reward = observations_barcodes_rewards[m][0][-1].view(
-                                        1, -1)
-                                    noisy_bc = torch.randint_like(barcode, 0,2, device = device)
-                                    input_to_lstm = torch.cat(
-                                        (action, noisy_bc, reward.view(1,1)), dim=1)
+                        # First input when not noisy comes from task.sample
+                        if t == 0 and i < noise_epoch_start:
+                            input_to_lstm = observations_barcodes_rewards[m]
 
                         # Using the output action and reward of the LSTM as the next input
                         else: #t != 0:
@@ -253,8 +264,10 @@ def run_experiment_sl(exp_settings):
                     # else:
                     memory_loss_id = barcode_id[m]
 
+                    mem_key = barcode_tensors[m] if i < noise_epoch_start else noisy_bc
+
                     output_t, cache = agent(input_to_lstm, barcode_strings[m][0], 
-                                            barcode_tensors[m], memory_loss_id,
+                                            mem_key, memory_loss_id,
                                             h_t, c_t)
                     a_t, assumed_barcode_string, mem_predicted_bc, prob_a_t, v_t, entropy, h_t, c_t = output_t
                     _, _, _, _, _, timings = cache
@@ -262,17 +275,18 @@ def run_experiment_sl(exp_settings):
                     pull_overhead_start = time.perf_counter()
 
                     # Ritter uses BC from memory, Embedding using bc from embedding through model predictor
+                    # Always use ground truth bc for reward eval
                     real_bc = barcode_strings[m][0][0]
 
-                    # Noisy Barcodes will use ground truth barcode from inputs to calculate rewards
-                    if (not exp_settings['train_with_noise'] and i >= n_epochs - exp_settings['noise_eval_epochs']) or\
-                                    exp_settings['train_with_noise']:
-                      reward_bc = real_bc
-                    else:
-                        reward_bc = mem_predicted_bc
+                    # # Noisy Barcodes will use ground truth barcode from inputs to calculate rewards
+                    # if (not exp_settings['train_with_noise'] and i >= n_epochs - exp_settings['noise_eval_epochs']) or\
+                    #                 exp_settings['train_with_noise']:
+                    #   reward_bc = real_bc
+                    # else:
+                    #     reward_bc = mem_predicted_bc
 
                     # compute immediate reward for actor network
-                    r_t = get_reward_from_assumed_barcode(a_t, reward_bc, 
+                    r_t = get_reward_from_assumed_barcode(a_t, real_bc, 
                                                             epoch_mapping, device, perfect_info)
 
                     # Does the predicted context match the actual context?
@@ -310,17 +324,20 @@ def run_experiment_sl(exp_settings):
                     next_bc = barcode_tensors[m]
 
                     # Add noise to the barcode at the right moments in experiment
-                    if (not exp_settings['train_with_noise'] and i >= n_epochs - exp_settings['noise_eval_epochs']) or\
-                            exp_settings['train_with_noise']:
+                    if i >= n_epochs - exp_settings['noise_eval_epochs']:
+                        next_bc = noisy_bc
 
-                        # Make the first portion of an episode have noisy barcodes
-                        if exp_settings['obs_begin_noisy'] and t < noise_split:
-                            next_bc = torch.randint_like(next_bc, 0,2, device = device)
+                    # if (not exp_settings['train_with_noise'] and i >= n_epochs - exp_settings['noise_eval_epochs']) or\
+                    #         exp_settings['train_with_noise']:
 
-                        # Make the last portion of an episode have noisy barcodes
-                        elif not exp_settings['obs_begin_noisy'] and t >= (pulls_per_episode - noise_split):
-                            next_bc = torch.randint_like(
-                                next_bc, 0, 2, device=device)
+                    #     # Make the first portion of an episode have noisy barcodes
+                    #     if exp_settings['obs_begin_noisy'] and t < noise_split:
+                    #         next_bc = torch.randint_like(next_bc, 0,2, device = device)
+
+                    #     # Make the last portion of an episode have noisy barcodes
+                    #     elif not exp_settings['obs_begin_noisy'] and t >= (pulls_per_episode - noise_split):
+                    #         next_bc = torch.randint_like(
+                    #             next_bc, 0, 2, device=device)
 
                     # Create next input to feed back into LSTM
                     last_action_output = torch.cat((one_hot_action, next_bc, r_t.view(1,1)), dim = 1)
@@ -354,11 +371,9 @@ def run_experiment_sl(exp_settings):
 
             if exp_settings['timing']:
                 loss_time = time.perf_counter() - episode_overhead_start
-            
 
             # Only perform model updates during train phase
-            if (not exp_settings['train_with_noise'] and i < n_epochs - exp_settings['noise_eval_epochs']) or\
-                exp_settings['train_with_noise']:
+            if i < n_epochs - exp_settings['noise_eval_epochs']:
 
                 # # Testing for gradient leaks between embedder model and lstm model
                 # print("Before-a2c o:\n", agent.a2c.critic.weight)
@@ -773,12 +788,10 @@ if __name__  == '__main__':
     exp_settings['barcode_size'] = 5
     exp_settings['num_barcodes'] = 5
     exp_settings['pulls_per_episode'] = 10
-    exp_settings['epochs'] = 20
+    exp_settings['epochs'] = 2000
 
     # Task Complexity
-    exp_settings['train_with_noise'] = False
-    exp_settings['obs_begin_noisy'] = False
-    exp_settings['noise_percent'] = 0.5
+    exp_settings['noise_percent'] = 0.50
     exp_settings['noise_eval_epochs'] = int(exp_settings['epochs']*0.25)
 
     # Data Logging
@@ -789,7 +802,7 @@ if __name__  == '__main__':
     ### Beginning of Experimental Runs ###
     f, axes = plt.subplots(1, 2, figsize=(12, 6))
     mem_store_types = ['context', 'embedding']
-    all_arms = [10]
+    all_arms = [4]
     num_repeats = 1
     # exp_settings['randomize'] = True if num_repeats > 1 else False
     exp_settings['randomize'] = True
@@ -806,7 +819,7 @@ if __name__  == '__main__':
                 exp_settings['lstm_learning_rate'] = 10**-3.332       #4.66e-4
                 exp_settings['value_error_coef'] = 0.62
                 # # exp_settings['num_barcodes'] = 6
-                # exp_settings['barcode_size'] = 8
+                exp_settings['barcode_size'] = 8
 
                 print(f"\nNew Run --> Iteration: {i} | Type: {mem_store} | Device: {exp_settings['torch_device']}")
                 logs, key_data = run_experiment_sl(exp_settings)
@@ -869,7 +882,8 @@ if __name__  == '__main__':
         num_bc = exp_settings['num_barcodes']
         num_eps = num_bc**2
         perfect_ret, random_ret = expected_return(exp_settings['num_arms'], exp_settings['perfect_info'])
-        axes[0].axhline(y=random_ret, color='b', linestyle='dashed', label = 'Random Pulls')
+        axes[0].axhline(y = random_ret, color='b', linestyle='dashed', label = 'Random Pulls')
+        axes[0].axvline(x=exp_settings['epochs'] - exp_settings['noise_eval_epochs'], color='r', linestyle = 'dashed', label = 'Noise On, Training Off')
         # perf_learned_value = (random_ret*num_bc + perfect_ret*(num_eps-num_bc))/num_eps
         # axes[0].axhline(y=perf_learned_value, color='r', linestyle='dashed', label = 'Perfect Pulls')
     axes[0].set_ylabel('Returns')
