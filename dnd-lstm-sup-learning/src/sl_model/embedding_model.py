@@ -17,8 +17,11 @@ class Embedder(nn.Module):
 
         # Basic Layers
         self.h2m = nn.Linear(self.input_dim, 2*embedding_size, bias=bias, device = device)
-        self.e2c = nn.Linear(2*embedding_size, self.num_arms, bias=bias, device = device)
-        # self.e2c = nn.Linear(embedding_size, self.num_barcodes, bias=bias, device = device)
+        self.e2c = nn.Linear(2*embedding_size, self.num_barcodes, bias=bias, device = device)
+        # self.e2c = nn.Linear(2*embedding_size, self.num_arms, bias=bias, device = device)
+
+        # Use an LSTM??  Future model choice considerations
+        self.lstm = nn.LSTM(self.input_dim, self.num_barcodes, bias=bias, device = device)
 
         # Blow up and shrink down
         # self.h2m = nn.Linear(self.input_dim, 2*embedding_size, bias=bias, device = device)

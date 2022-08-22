@@ -123,8 +123,8 @@ class DND():
         self.trial_buffer.pop(0)
         keys = self.trial_buffer
         # self.trial_hidden_states = [keys[-1]]
-        self.trial_hidden_states = [keys[i] for i in range(len(keys))]
-        # self.trial_hidden_states = [keys[i] for i in range(len(keys)) if keys[i] != () and i > len(keys)//4]
+        # self.trial_hidden_states = [keys[i] for i in range(len(keys))]
+        self.trial_hidden_states = [keys[i] for i in range(len(keys)) if keys[i] != () and i > len(keys)//4]
         # print(trial_hidden_states)
 
         for embedding, context_location, _, emb_pred, mem_pred in self.trial_hidden_states:
@@ -491,8 +491,18 @@ class DND():
             # get the best-match memory
             best_memory_val, best_memory_id = self._get_memory(similarities)
 
+            # Unfreeze Embedder to train
+            for name, param in agent.named_parameters():
+                # print(name, param.grad)
+                param.requires_grad = True
+
             # identify the barcode from the best match embedding by passing back through the last layer of the embedder
             barcode_id_guess = agent.forward_predict_bc(key_list[best_memory_id])
+
+            # Unfreeze Embedder to train
+            for name, param in agent.named_parameters():
+                # print(name, param.grad)
+                param.requires_grad = False
 
             mem_pred_loss = self.criterion(barcode_id_guess.view(1,-1), real_label_id)
             emb_loss += mem_pred_loss
