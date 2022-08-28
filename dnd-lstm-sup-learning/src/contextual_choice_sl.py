@@ -61,7 +61,7 @@ def run_experiment_sl(exp_settings):
         torch.manual_seed(seed_val)
         np.random.seed(seed_val)
 
-    n_epochs = exp_settings['epochs']
+    n_epochs = exp_settings['epochs'] + exp_settings['noise_eval_epochs']*len(exp_settings['noise_percent'])
     agent_input = exp_settings['agent_input']
    
     '''init task'''
@@ -83,9 +83,10 @@ def run_experiment_sl(exp_settings):
     # Arm rewards can be deterministic for debugging
     perfect_info = exp_settings['perfect_info']
 
-    # Make a percent of observed pulls useless for prediction by obscuring the barcode
-    noise_epoch_start = n_epochs - exp_settings['noise_eval_epochs']
-    noise_barcode_flip_locs = int(exp_settings['noise_percent']*barcode_size)
+    # Cluster barcodes at the start (Only use one per experiment)
+    sim_threshold = exp_settings['sim_threshold']
+    hamming_threshold = exp_settings['hamming_threshold']
+    assert (hamming_threshold > 0 and hamming_threshold < barcode_size) or (hamming_threshold == 0 and sim_threshold) 
 
     # Task Choice
     if exp_settings['task_version'] == 'bandit':
@@ -96,7 +97,7 @@ def run_experiment_sl(exp_settings):
             pulls_per_episode, episodes_per_epoch,
             num_arms, num_barcodes, barcode_size,
             reset_barcodes_per_epoch, reset_arms_per_epoch,
-            0, device, perfect_info)
+            sim_threshold, hamming_threshold, device, perfect_info)
 
         # LSTM Chooses which arm to pull
         dim_output_lstm = num_arms
@@ -142,7 +143,6 @@ def run_experiment_sl(exp_settings):
     # Results for TB or Graphing
     log_return = np.zeros(n_epochs,)
     log_embedder_accuracy = np.zeros(n_epochs,)
-    log_memory_accuracy = np.zeros(n_epochs,)
     log_loss_value = np.zeros(n_epochs,)
     log_loss_policy = np.zeros(n_epochs,)
     log_loss_total = np.zeros(n_epochs,)
@@ -165,7 +165,7 @@ def run_experiment_sl(exp_settings):
         # see exp_settings['reset_barcodes_per_epoch']
         # get data for this epoch
         if exp_settings['task_version'] == 'bandit':
-            observations_barcodes_rewards, epoch_mapping, barcode_strings, barcode_tensors, barcode_id, arm_id = task.sample()
+            observations_barcodes_rewards, epoch_mapping, barcode_strings, barcode_tensors, barcode_id = task.sample()
             agent.dnd.mapping = epoch_mapping
             # print(observations_barcodes)
 
@@ -180,6 +180,13 @@ def run_experiment_sl(exp_settings):
         agent.turn_on_retrieval()
         # print(sorted(list(epoch_mapping.items())))
 
+        # How much noise is needed?
+        apply_noise = i-exp_settings['epochs']
+        if apply_noise >= 0:
+            noise_idx = apply_noise//exp_settings['noise_eval_epochs']
+            noise_percent = exp_settings['noise_percent'][noise_idx]
+            noise_barcode_flip_locs = int(noise_percent*barcode_size)
+
         # loop over the training set
         for m in range(episodes_per_epoch):
 
@@ -188,7 +195,6 @@ def run_experiment_sl(exp_settings):
 
             # prealloc
             embedder_accuracy = 0
-            memory_accuracy = 0
             cumulative_reward = 0
             probs, rewards, values, entropies = [], [], [], []
             h_t, c_t = agent.get_init_states()
@@ -211,7 +217,7 @@ def run_experiment_sl(exp_settings):
             agent.flush_trial_buffer()
 
             # Noisy Barcodes are constant across an episode if needed
-            if i >= noise_epoch_start:
+            if apply_noise >= 0:
                 action = observations_barcodes_rewards[m][0][0:num_arms].view(1,-1)
                 noisy_bc = observations_barcodes_rewards[m][0][num_arms:-1].view(1,-1)
                 reward = observations_barcodes_rewards[m][0][-1].view(
@@ -228,6 +234,8 @@ def run_experiment_sl(exp_settings):
                 for idx1, mask1 in zip(idx[0], mask[0]):
                     noisy_bc[0][idx1] = float(int(torch.ne(mask1,noisy_bc[0][idx1])))
                 # print(f"BC After: {noisy_bc}")
+
+                # print(compute_similarities(noisy_bc[0], [barcode_tensors[m][0]], metric = 'cosine'))
 
                 # Remake the input
                 input_to_lstm = torch.cat(
@@ -249,7 +257,7 @@ def run_experiment_sl(exp_settings):
                     if exp_settings['lstm_inputs_looped']:
 
                         # First input when not noisy comes from task.sample
-                        if t == 0 and i < noise_epoch_start:
+                        if t == 0 and i < exp_settings['epochs']:
                             input_to_lstm = observations_barcodes_rewards[m]
 
                         # Using the output action and reward of the LSTM as the next input
@@ -264,12 +272,12 @@ def run_experiment_sl(exp_settings):
                     # else:
                     memory_loss_id = barcode_id[m]
 
-                    mem_key = barcode_tensors[m] if i < noise_epoch_start else noisy_bc
+                    mem_key = barcode_tensors[m] if i < exp_settings['epochs'] else noisy_bc
 
                     output_t, cache = agent(input_to_lstm, barcode_strings[m][0], 
                                             mem_key, memory_loss_id,
                                             h_t, c_t)
-                    a_t, assumed_barcode_string, mem_predicted_bc, prob_a_t, v_t, entropy, h_t, c_t = output_t
+                    a_t, assumed_barcode_string, prob_a_t, v_t, entropy, h_t, c_t = output_t
                     _, _, _, _, _, timings = cache
 
                     pull_overhead_start = time.perf_counter()
@@ -278,21 +286,13 @@ def run_experiment_sl(exp_settings):
                     # Always use ground truth bc for reward eval
                     real_bc = barcode_strings[m][0][0]
 
-                    # # Noisy Barcodes will use ground truth barcode from inputs to calculate rewards
-                    # if (not exp_settings['train_with_noise'] and i >= n_epochs - exp_settings['noise_eval_epochs']) or\
-                    #                 exp_settings['train_with_noise']:
-                    #   reward_bc = real_bc
-                    # else:
-                    #     reward_bc = mem_predicted_bc
-
                     # compute immediate reward for actor network
                     r_t = get_reward_from_assumed_barcode(a_t, real_bc, 
                                                             epoch_mapping, device, perfect_info)
 
                     # Does the predicted context match the actual context?
                     embedder_accuracy += int(real_bc == assumed_barcode_string)
-                    memory_accuracy += int(real_bc == mem_predicted_bc)
-                    # print(real_bc, assumed_barcode_string, mem_predicted_bc)
+                    # print(real_bc, assumed_barcode_string)
 
                     # # Confusion Matrix for Embedder Predictions
                     # if exp_settings['mem_store'] == 'embedding' and i == n_epochs - 1:
@@ -327,18 +327,6 @@ def run_experiment_sl(exp_settings):
                     if i >= n_epochs - exp_settings['noise_eval_epochs']:
                         next_bc = noisy_bc
 
-                    # if (not exp_settings['train_with_noise'] and i >= n_epochs - exp_settings['noise_eval_epochs']) or\
-                    #         exp_settings['train_with_noise']:
-
-                    #     # Make the first portion of an episode have noisy barcodes
-                    #     if exp_settings['obs_begin_noisy'] and t < noise_split:
-                    #         next_bc = torch.randint_like(next_bc, 0,2, device = device)
-
-                    #     # Make the last portion of an episode have noisy barcodes
-                    #     elif not exp_settings['obs_begin_noisy'] and t >= (pulls_per_episode - noise_split):
-                    #         next_bc = torch.randint_like(
-                    #             next_bc, 0, 2, device=device)
-
                     # Create next input to feed back into LSTM
                     last_action_output = torch.cat((one_hot_action, next_bc, r_t.view(1,1)), dim = 1)
 
@@ -349,20 +337,7 @@ def run_experiment_sl(exp_settings):
                     pull_cumulative += (time.perf_counter() - pull_start)
                     
             # print("-- end of ep --")
-            for name, param in agent.named_parameters():
-                if not param.requires_grad:
-                    print(name)
-
             episode_overhead_start = time.perf_counter()
-
-            # Embedder Loss for Episode
-            if exp_settings['mem_store'] == 'embedding':
-                a_dnd = agent.dnd
-                loss_vals = [x[2] for x in a_dnd.trial_buffer]
-                # loss_vals = [x[2] for x in a_dnd.trial_hidden_states]
-                episode_loss = torch.stack(loss_vals).mean()
-                # print("EmbLoss:", episode_loss)
-                a_dnd.embedder_loss[i] += (episode_loss/episodes_per_epoch)
 
             # LSTM/A2C Loss for Episode
             returns = compute_returns(rewards, device, gamma = 0.0)
@@ -373,7 +348,15 @@ def run_experiment_sl(exp_settings):
                 loss_time = time.perf_counter() - episode_overhead_start
 
             # Only perform model updates during train phase
-            if i < n_epochs - exp_settings['noise_eval_epochs']:
+            if apply_noise < 0:
+
+                 # Embedder Loss for Episode
+                if exp_settings['mem_store'] == 'embedding':
+                    a_dnd = agent.dnd
+                    loss_vals = [x[2] for x in a_dnd.trial_buffer]
+                    episode_loss = torch.stack(loss_vals).mean()
+                    # print("EmbLoss:", episode_loss)
+                    a_dnd.embedder_loss[i] += (episode_loss/episodes_per_epoch)
 
                 # # Testing for gradient leaks between embedder model and lstm model
                 # print("Before-a2c o:\n", agent.a2c.critic.weight)
@@ -439,7 +422,6 @@ def run_experiment_sl(exp_settings):
            
             # Updating avg accuracy per episode
             log_embedder_accuracy[i] += torch.div(embedder_accuracy, (episodes_per_epoch*pulls_per_episode))
-            log_memory_accuracy[i] += torch.div(memory_accuracy, (episodes_per_epoch*pulls_per_episode))
             
             # Loss Logging
             log_loss_value[i] += torch.div(loss_value, episodes_per_epoch)
@@ -452,9 +434,6 @@ def run_experiment_sl(exp_settings):
                 for k,v in ep_timings.items():
                     episode_timings[k] = episode_timings.get(k,0) + v
                 episode_cumulative += (time.perf_counter() - episode_start)
-
-        # # Used for Embedder loss logging
-        # agent.dnd.epoch_counter += 1
 
         # Tensorboard Stuff
         tb_start = time.perf_counter() 
@@ -477,8 +456,6 @@ def run_experiment_sl(exp_settings):
                             agent.dnd.embedder_loss[i], i)
                 tb.add_scalar("Accuracy Embedder Model",
                                 log_embedder_accuracy[i], i)
-                tb.add_scalar("Accuracy Memory BC Prediction",
-                                log_memory_accuracy[i], i)
                 # for name, weight in agent.dnd.embedder.named_parameters():
                 #     tb.add_histogram(name, weight, i)
                 #     try:
@@ -498,21 +475,19 @@ def run_experiment_sl(exp_settings):
                 'Epoch %3d | avg_return = %.2f | loss: val = %.2f, pol = %.2f, tot = %.2f | time = %.2f'%
                 (i, log_return[i], log_loss_value[i], log_loss_policy[i], log_loss_total[i], run_time[i])
             )
-            # Embedder Accuracy over the last 10 epochs
-            # if exp_settings['mem_store'] == 'embedding':
+            # Accuracy over the last 10 epochs
             if  i > 10:
                 avg_acc = log_embedder_accuracy[i-9:i+1].mean()
-                avg_acc_mem = log_memory_accuracy[i-9:i+1].mean()
             else:
                 avg_acc = log_embedder_accuracy[:i+1].mean()
-                avg_acc_mem = log_memory_accuracy[:i+1].mean()
             print("\tEmbedder Accuracy: ", round(avg_acc, 4), end = ' | ')
-            print("Memory Accuracy: ", round(avg_acc_mem, 4), end = ' | ')
             print("Ritter Baseline: ", round(1-1/exp_settings['num_barcodes'], 4))
+
+        # Store the keys from just before the noise begins
+        if i == exp_settings['epochs'] - 1:
+            keys, prediction_mapping = agent.get_all_mems_embedder()
     
     # Final Results
-    # plot_grad_flow(agent.named_parameters())
-
     print("- - - "*3)
     final_q = 3*(exp_settings['epochs']//4)
     print("Last Quarter Return Avg: ", round(np.mean(log_return[final_q:]), 3))
@@ -562,10 +537,7 @@ def run_experiment_sl(exp_settings):
         print(timing_df)
     print("- - - "*3)
 
-    # Additional returns to graph out of this file
-    keys, prediction_mapping = agent.get_all_mems_embedder()
-
-    logs = log_return, log_loss_value, log_loss_policy, log_loss_total, log_embedder_accuracy, agent.dnd.embedder_loss, log_memory_accuracy
+    logs = log_return, log_loss_value, log_loss_policy, log_loss_total, log_embedder_accuracy, agent.dnd.embedder_loss
     key_data = keys, prediction_mapping, epoch_mapping, barcode_data
 
     if exp_settings['tensorboard_logging']:
@@ -573,23 +545,6 @@ def run_experiment_sl(exp_settings):
         tb.close()
 
     return  logs, key_data
-
-def update_avg_value(current_list, epoch_num, episode_num, episode_sum, episodes_per_epoch, pulls_per_episode):
-    i = epoch_num
-    m = episode_num
-    episode_counter = (m) + (i)*(episodes_per_epoch)
-    episode_avg = episode_sum/pulls_per_episode
-
-    if m == 0:
-        if i == 0:
-            current_list[i][m] = episode_avg
-        else:
-            current_list[i][m] = (
-                current_list[i-1][-1]*(episode_counter) + episode_avg)/(episode_counter+1)
-    else:
-        current_list[i][m] = (
-            current_list[i][m-1]*(episode_counter) + episode_avg)/(episode_counter+1)
-    return current_list
 
 # Graphing Helper Functions
 def expected_return(num_arms, perfect_info):
@@ -601,71 +556,36 @@ def expected_return(num_arms, perfect_info):
         random = 1/num_arms
     return perfect, random
 
-# From https://discuss.pytorch.org/t/check-gradient-flow-in-network/15063/10
-def plot_grad_flow(named_parameters):
-    '''Plots the gradients flowing through different layers in the net during training.
-    Can be used for checking for possible gradient vanishing / exploding problems.
-    
-    Usage: Plug this function in Trainer class after loss.backwards() as 
-    "plot_grad_flow(self.model.named_parameters())" to visualize the gradient flow'''
-    ave_grads = []
-    max_grads = []
-    layers = []
-    for n, p in named_parameters:
-        if(p.requires_grad) and ("bias" not in n):
-            layers.append(n)
-            ave_grads.append(p.grad.abs().mean())
-            max_grads.append(p.grad.abs().max())
-    plt.bar(np.arange(len(max_grads)), max_grads, alpha=0.1, lw=1, color="c")
-    plt.bar(np.arange(len(max_grads)), ave_grads, alpha=0.1, lw=1, color="b")
-    plt.hlines(0, 0, len(ave_grads)+1, lw=2, color="k")
-    plt.xticks(range(0, len(ave_grads), 1), layers, rotation="vertical")
-    plt.xlim(left=0, right=len(ave_grads))
-    plt.ylim(bottom=-0.001, top=0.02)  # zoom in on the lower gradient regions
-    plt.xlabel("Layers")
-    plt.ylabel("average gradient")
-    plt.title("Gradient flow")
-    plt.grid(True)
-    # plt.legend([Line2D([0], [0], color="c", lw=4),
-    #             Line2D([0], [0], color="b", lw=4),
-    #             Line2D([0], [0], color="k", lw=4)], ['max-gradient', 'mean-gradient', 'zero-gradient'])
-
 # Adapted from https://learnopencv.com/t-sne-for-feature-visualization/
 def scale_to_01_range(x):
     value_range = (np.max(x) - np.min(x))
     starts_from_zero = x - np.min(x)
     return starts_from_zero / value_range
 
-def plot_tsne_distribution(keys, labels, mapping, fig, axes):
+def plot_tsne_distribution(keys, labels, arms, mapping, fig, axes, idx_mem):
     features = np.array([y.cpu().numpy() for y in keys])
     tsne = TSNE(n_components=2).fit_transform(features)
     tx = tsne[:, 0]
     ty = tsne[:, 1]
     tx = scale_to_01_range(tx)
     ty = scale_to_01_range(ty)
-    # # for every class, we'll add a scatter plot separately
-    classes = {k:[] for k in range(len(mapping.keys()))}
+
+    # Seperate by barcode
+    classes = {k:[] for k in mapping.keys()}
     for idx, c_id in enumerate(labels):
         classes[c_id].append(idx)
-    for c_id, indices in classes.items():
+
+    marker_list = ['x', 'o', '*', 'v', '.', '^', '<', '>', '+', 's']
+    color_list = ['b', 'g', 'r', 'c', 'm', 'y', 'k', 'w']
+    for m_id, (c_id, indices) in enumerate(classes.items()):
         # extract the coordinates of the points of this class only
         current_tx = np.take(tx, indices)
         current_ty = np.take(ty, indices)
-        axes.scatter(current_tx, current_ty)
 
-    # label_list = [labels[i][0] for i in range(len(labels))]
-    # start, end = 0,0
-    # for barcode, num, _ in labels:
-    #     start = end
-    #     end = end + num
-    #     # find the samples of the current class in the data
-    #     indices = [i for i in range(start, end)]
-    #     # extract the coordinates of the points of this class only
-    #     current_tx = np.take(tx, indices)
-    #     current_ty = np.take(ty, indices)
-    #     # add a scatter plot with the corresponding color and label
-    #     # , label=f"B:{barcode} | Valid:{valid} | Num:{num}"
-    #     axes.scatter(current_tx, current_ty)
+        # Identify the arm of the barcode
+        arm = mapping[c_id]
+        axes[idx_mem].scatter(current_tx, current_ty, c = color_list[arm], marker = marker_list[m_id])
+
     return fig, axes
 
 def get_barcode(mem_id, prediction_mapping):
@@ -770,7 +690,7 @@ if __name__  == '__main__':
     ### End Hyperparams in BayesOpt ###
 
     ### Experimental Parameters ###
-    exp_settings['randomize'] = False
+    exp_settings['randomize'] = True
     exp_settings['perfect_info'] = False
     exp_settings['reset_barcodes_per_epoch'] = False
     exp_settings['reset_arms_per_epoch'] = True
@@ -784,59 +704,85 @@ if __name__  == '__main__':
     exp_settings['task_version'] = 'bandit'         # Bandit, original
 
     # Task Size and Length
-    exp_settings['num_arms'] = 5
-    exp_settings['barcode_size'] = 5
-    exp_settings['num_barcodes'] = 5
+    exp_settings['num_arms'] = 0
+    exp_settings['barcode_size'] = 0
+    exp_settings['num_barcodes'] = 0
     exp_settings['pulls_per_episode'] = 10
-    exp_settings['epochs'] = 2000
+    exp_settings['epochs'] = 1000
 
     # Task Complexity
-    exp_settings['noise_percent'] = 0.50
-    exp_settings['noise_eval_epochs'] = int(exp_settings['epochs']*0.25)
+    exp_settings['noise_percent'] = [0.25, 0.5, 0.75, 0.875]
+    exp_settings['noise_eval_epochs'] = 100
+    exp_settings['sim_threshold'] = 0.5         #Cosine similarity threshold for clustering
+    exp_settings['hamming_threshold'] = 5       #Hamming distance for clustering
 
     # Data Logging
-    exp_settings['tensorboard_logging'] = True
+    exp_settings['tensorboard_logging'] = False
     exp_settings['timing'] = True
     ### End of Experimental Parameters ###
 
     ### Beginning of Experimental Runs ###
     f, axes = plt.subplots(1, 2, figsize=(12, 6))
+    f1, axs = plt.subplots(1, 1, figsize=(6, 6))
+    f3, axes3 = plt.subplots(1, 2, figsize=(12, 6))
+
     mem_store_types = ['context', 'embedding']
-    all_arms = [4]
-    num_repeats = 1
-    # exp_settings['randomize'] = True if num_repeats > 1 else False
-    exp_settings['randomize'] = True
+    num_arms = 3
+    num_repeats = 3
 
-    for mem_store in mem_store_types:
-        for num_arms in all_arms:
-            tot_rets = np.zeros(exp_settings['epochs'])
-            exp_settings = get_hyperparams(mem_store, num_arms, exp_settings)
-            for i in range(num_repeats):
-                exp_settings['torch_device'] = 'GPU'
-                exp_settings['dim_hidden_a2c'] = int(2**8.644)        #400
-                exp_settings['dim_hidden_lstm'] = int(2**8.655)       #403
-                exp_settings['entropy_error_coef'] = 0.0391
-                exp_settings['lstm_learning_rate'] = 10**-3.332       #4.66e-4
-                exp_settings['value_error_coef'] = 0.62
-                # # exp_settings['num_barcodes'] = 6
-                exp_settings['barcode_size'] = 8
+    for idx_mem, mem_store in enumerate(mem_store_types):
+        tot_rets = np.zeros(exp_settings['epochs']+exp_settings['noise_eval_epochs']*len(exp_settings['noise_percent']))
+        exp_settings = get_hyperparams(mem_store, num_arms, exp_settings)
+        for i in range(num_repeats):
+            exp_settings['torch_device'] = 'GPU'
+            exp_settings['dim_hidden_a2c'] = int(2**8.644)        #400
+            exp_settings['dim_hidden_lstm'] = int(2**8.655)       #403
+            exp_settings['entropy_error_coef'] = 0.0391
+            exp_settings['lstm_learning_rate'] = 10**-3.332       #4.66e-4
+            exp_settings['value_error_coef'] = 0.62
+            exp_settings['num_barcodes'] = 6
+            exp_settings['barcode_size'] = 16
 
-                print(f"\nNew Run --> Iteration: {i} | Type: {mem_store} | Device: {exp_settings['torch_device']}")
-                logs, key_data = run_experiment_sl(exp_settings)
-                log_return, log_loss_value, log_loss_policy, log_loss_total, log_embedder_accuracy, embedder_loss, log_memory_accuracy = logs
-                keys, prediction_mapping, epoch_mapping, barcode_data = key_data 
-                tot_rets += log_return/num_repeats
-                # print(tot_rets)
+            print(f"\nNew Run --> Iteration: {i} | Type: {mem_store} | Device: {exp_settings['torch_device']}")
+            logs, key_data = run_experiment_sl(exp_settings)
+            log_return, log_loss_value, log_loss_policy, log_loss_total, log_embedder_accuracy, embedder_loss = logs
+            keys, prediction_mapping, epoch_mapping, barcode_data = key_data 
+            tot_rets += log_return/num_repeats
+            # print(tot_rets)
 
-            smoothed_rewards = pd.Series.rolling(pd.Series(tot_rets), 10).mean()
-            smoothed_rewards = [elem for elem in smoothed_rewards]
-            axes[0].plot(smoothed_rewards, label=f'Arms/BC:{num_arms} | Mem: {mem_store}')
+        smoothed_rewards = pd.Series.rolling(pd.Series(tot_rets), 15).mean()
+        smoothed_rewards = [elem for elem in smoothed_rewards]
+        axes[0].plot(smoothed_rewards, label=f'Arms/BC:{num_arms} | Mem: {mem_store}')
 
-            # Only graphing the loss on the final trial if there are multiple repeats
-            smoothed_loss = pd.Series.rolling(pd.Series(log_loss_total), 10).mean()
-            smoothed_loss = [elem for elem in smoothed_loss]
-            axes[1].plot(
-                smoothed_loss, label=f'Arms/BC:{num_arms} | Mem: {mem_store}')
+        # Only graphing the loss on the final trial if there are multiple repeats
+        smoothed_loss = pd.Series.rolling(pd.Series(log_loss_total), 15).mean()
+        smoothed_loss = [elem for elem in smoothed_loss]
+        axes[1].plot(
+            smoothed_loss, label=f'Arms/BC:{num_arms} | Mem: {mem_store}')
+
+        # Embedder/Mem Accuracy 
+        smoothed_accuracy = pd.Series.rolling(pd.Series(log_embedder_accuracy), 15).mean()
+        smoothed_accuracy = [elem for elem in smoothed_accuracy]
+        axs.plot(smoothed_accuracy, label=f'Arms/BC:{num_arms} | Mem: {mem_store}')
+
+        embeddings = [x[0] for x in keys]
+        labels = [x[1] for x in keys]
+
+        # Map the keys to their predicted best arm pull
+        if mem_store == 'context':
+            arm_pred = [epoch_mapping[x] for x in labels]
+        else:
+            rev_pred = {v:k for k,v in prediction_mapping.items()}
+            labels = [rev_pred[x] for x in labels]
+            arm_pred = [epoch_mapping[x] for x in labels]
+
+        f3, axes3 = plot_tsne_distribution(embeddings, labels, arm_pred, epoch_mapping, f3, axes3, idx_mem)
+        axes3[idx_mem].xaxis.set_visible(False)
+        axes3[idx_mem].yaxis.set_visible(False)
+        axes3[idx_mem].set_title(mem_store)
+
+        # # Embedder Barcode Confusion Matrix
+        # axs[1] = make_confusion_matrix(epoch_mapping, barcode_data)
 
     # Put generic ritter trend on graph for quick reference
     if (exp_settings['num_arms'] == 10 and 
@@ -878,12 +824,17 @@ if __name__  == '__main__':
     Arms: {exp_settings['num_arms']} | Pulls per Trial: {exp_settings['pulls_per_episode']} | Perfect Arms: {exp_settings['perfect_info']}"""
 
     # Returns
-    if exp_settings['task_version'] == 'bandit' and len(all_arms) == 1:
+    if exp_settings['task_version'] == 'bandit':
         num_bc = exp_settings['num_barcodes']
         num_eps = num_bc**2
         perfect_ret, random_ret = expected_return(exp_settings['num_arms'], exp_settings['perfect_info'])
         axes[0].axhline(y = random_ret, color='b', linestyle='dashed', label = 'Random Pulls')
-        axes[0].axvline(x=exp_settings['epochs'] - exp_settings['noise_eval_epochs'], color='r', linestyle = 'dashed', label = 'Noise On, Training Off')
+        colors = ['g', 'r', 'c', 'm']
+        for idx, noise_percent in enumerate(exp_settings['noise_percent']):
+            axes[0].axvline(x=exp_settings['epochs'] + idx*exp_settings['noise_eval_epochs'], color=colors[idx], linestyle = 'dashed',\
+                label = f"{int(exp_settings['barcode_size']*noise_percent)} Bits Noisy")
+            axs.axvline(x=exp_settings['epochs'] + idx*exp_settings['noise_eval_epochs'], color=colors[idx], linestyle='dashed',
+                label = f"{int(exp_settings['barcode_size']*noise_percent)} Bits Noisy")
         # perf_learned_value = (random_ret*num_bc + perfect_ret*(num_eps-num_bc))/num_eps
         # axes[0].axhline(y=perf_learned_value, color='r', linestyle='dashed', label = 'Perfect Pulls')
     axes[0].set_ylabel('Returns')
@@ -897,67 +848,19 @@ if __name__  == '__main__':
     axes[1].legend(bbox_to_anchor=(0, -0.2, 1, 0), loc="upper left",
             mode="expand", borderaxespad=0, ncol=2)
 
-    if exp_settings['mem_store'] == 'embedding':
-
-        # Embedder Accuracy 
-        f1, axs = plt.subplots(1, 2, figsize=(18, 6))
-        # axs[0].plot(smoothed_rewards, label=f'Embedding Returns (for reference)')
-        smoothed_accuracy = pd.Series.rolling(pd.Series(log_embedder_accuracy), 10).mean()
-        smoothed_accuracy = [elem for elem in smoothed_accuracy]
-        axs[0].plot(smoothed_accuracy, label=f"Embedding Accuracy")
-
-        # Memory Accuracy
-        smoothed_mem_accuracy = pd.Series.rolling(pd.Series(log_memory_accuracy), 10).mean()
-        smoothed_mem_accuracy = [elem for elem in smoothed_mem_accuracy]
-        axs[0].plot(smoothed_mem_accuracy, label=f"Memory Accuracy")
-
-        axs[0].set_ylabel('Accuracy')
-        axs[0].set_xlabel('Epoch')
-        axs[0].set_title('Embedding Model Barcode Prediction Accuracy')
-        axs[0].axhline(y=1/exp_settings['num_barcodes'], color='b', linestyle='dashed', label = 'Random Choice')
-        axs[0].axhline(y=(1-1/exp_settings['num_barcodes']), color='b', linestyle='dashed', label = 'Ritter Acc')
-        axs[0].legend(bbox_to_anchor=(0, -0.2, 1, 0), loc="upper left",
-                mode="expand", borderaxespad=0, ncol=2)
-
-        # # Embedder Barcode Confusion Matrix
-        # axs[1] = make_confusion_matrix(epoch_mapping, barcode_data)
-        f1.tight_layout()
-
-        # T-SNE Mapping Attempts (from https://learnopencv.com/t-sne-for-feature-visualization/)
-        f3, axes3 = plt.subplots(1, 1, figsize=(8, 5))
-        # labels = []
-        # total_pulls = exp_settings['pulls_per_episode']*(exp_settings['num_barcodes']**2)
-        # for mem_id, (barcode_keys, context) in enumerate(keys):
-        #     # print(prediction_mapping)
-        #     num_keys = len(barcode_keys)
-        #     # print(mem_id, num_keys)
-        #     if num_keys > 0:
-        #         barcode = get_barcode(context, prediction_mapping)
-        #         labels.append((barcode, num_keys, round(100*num_keys/total_pulls, 2)))
-        # print("Epoch Mapping:", epoch_mapping.keys())
-        # print("Key Info:", labels, total_keys)
-
-        # Remove context_id and only leave embedding
-        # flattened_keys = list(itertools.chain.from_iterable(embeddings))
-        # print(len(flattened_keys))
-        # f3, axes3 = plot_tsne_distribution(flattened_keys, labels, f3, axes3)
-        
-        embeddings = [x[0] for x in keys]
-        labels = [x[1] for x in keys]
-
-        # Map the keys to their predicted best arm pull
-        rev_pred = {v:k for k,v in prediction_mapping.items()}
-        bc_pred = [rev_pred[x] for x in labels]
-        arm_pred = [epoch_mapping[x] for x in bc_pred]
-
-        f3, axes3 = plot_tsne_distribution(embeddings, arm_pred, epoch_mapping, f3, axes3)
-        axes3.xaxis.set_visible(False)
-        axes3.yaxis.set_visible(False)
-        axes3.set_title("t-SNE on Embeddings from last epoch, colored by arm choice")
-        f3.tight_layout()
+    # Accuracy
+    axs.set_ylabel('Accuracy')
+    axs.set_xlabel('Epoch')
+    axs.set_title('Model Barcode Prediction Accuracy')
+    axs.axhline(y=1/exp_settings['num_barcodes'], color='b', linestyle='dashed', label = 'Random Choice')
+    axs.legend(bbox_to_anchor=(0, -0.2, 1, 0), loc="upper left",
+            mode="expand", borderaxespad=0, ncol=2)
 
     sns.despine()
     f.tight_layout()
     f.subplots_adjust(top=0.7)
     f.suptitle(graph_title)
+    f1.tight_layout()
+    f3.tight_layout()
+    f3.suptitle("t-SNE on keys in memory from last training epoch\nIcon indicates barcode, color is best arm choice")
     plt.show()

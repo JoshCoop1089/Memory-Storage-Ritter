@@ -106,17 +106,10 @@ class DNDLSTM(nn.Module):
             for layer in layers:
                 for name, param in layer.named_parameters():
                     param.requires_grad = False 
-                # print(name, param.data, param.grad)
-
-            # print("B-Retrieve:\n", self.a2c.critic.weight)
-            # print("B-Retrieve:\n", self.dnd.embedder.e2c.weight)
     
             # Query Memory (hidden state passed into embedder, barcode_string used for embedder loss function)
-            mem, predicted_barcode, mem_predicted_bc = self.dnd.get_memory(h, barcode_string, barcode_id)
+            mem, predicted_barcode = self.dnd.get_memory(h, barcode_string, barcode_id)
             m_t = mem.tanh()
-
-            # print("A-Retrieve:\n", self.a2c.critic.weight)
-            # print("A-Retrieve:\n", self.dnd.embedder.e2c.weight)
 
             # Unfreeze LSTM
             for layer in layers:
@@ -125,9 +118,8 @@ class DNDLSTM(nn.Module):
                 # print(name, param.data)
 
         else:
-            mem, predicted_barcode, mem_predicted_bc = self.dnd.get_memory_non_embedder(q_t)
+            mem, predicted_barcode = self.dnd.get_memory_non_embedder(q_t)
             m_t = mem.tanh()
-            # print("A:", self.a2c.critic.weight.data, self.a2c.critic.weight.grad)
         
         if self.exp_settings['timing']:
             forward_get_mem = time.perf_counter() - forward_prep - forward_preact - forward_gate - forward_start
@@ -141,28 +133,12 @@ class DNDLSTM(nn.Module):
         # Saving memory happens once at the end of every episode
         if not self.dnd.encoding_off:
             if self.exp_settings['mem_store'] == 'embedding':
-                # # Freeze all LSTM Layers before getting memory
-                # layers_before = [self.i2h, self.h2h, self.a2c]
-                # for layer in layers_before:
-                #     for name, param in layer.named_parameters():
-                #         param.requires_grad = False 
-
-                # # print("Before-a2c s:\n", self.a2c.critic.weight)
-                # # print("Before-emb s:\n", self.dnd.embedder.e2c.weight)
 
                 # Saving Memory (hidden state passed into embedder, embedding is key and c_t is val)
                 self.dnd.save_memory(h_t, c_t)
 
-                # # print("After-a2c s:\n", self.a2c.critic.weight)
-                # # print("After-emb s:\n", self.dnd.embedder.e2c.weight)
-
-                # layers_after = [self.i2h, self.h2h, self.a2c]
-                # # Unfreeze LSTM
-                # for layer in layers_after:
-                #     for name, param in layer.named_parameters():
-                #         param.requires_grad = True 
             else:
-                self.dnd.save_memory_non_embedder(q_t, barcode_string, c_t)
+                self.dnd.save_memory_non_embedder(q_t, barcode_tensor, c_t)
 
             if self.exp_settings['timing']:
                 forward_save = time.perf_counter() - forward_get_mem - forward_prep - \
@@ -181,7 +157,7 @@ class DNDLSTM(nn.Module):
                         "1d. Get_mem": forward_get_mem, "1e. Action": forward_action, "1f. Save_mem": forward_save}
         
         # fetch activity
-        output = (a_t, predicted_barcode, mem_predicted_bc, prob_a_t, v_t, entropy, h_t, c_t)
+        output = (a_t, predicted_barcode, prob_a_t, v_t, entropy, h_t, c_t)
         cache = (f_t, i_t, o_t, r_t, m_t, timings)
 
         return output, cache

@@ -127,7 +127,5 @@ for idx1, mask1 in zip(idx, mask):
     a[idx1] *= mask1 
 print(a, idx, mask)
 
-0, 1 -> 1
-0, 0 -> 0
-1, 1 -> 0
-1, 0 -> 1
+if 0:
+    print('yay')

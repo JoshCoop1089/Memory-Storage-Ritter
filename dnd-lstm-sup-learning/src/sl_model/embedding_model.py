@@ -17,7 +17,9 @@ class Embedder(nn.Module):
 
         # Basic Layers
         self.h2m = nn.Linear(self.input_dim, 2*embedding_size, bias=bias, device = device)
-        self.e2c = nn.Linear(2*embedding_size, self.num_barcodes, bias=bias, device = device)
+        self.mdrope = nn.Dropout(0.5)
+        self.m2e = nn.Linear(2*embedding_size, 1*embedding_size, bias=bias, device = device)
+        self.e2c = nn.Linear(1*embedding_size, self.num_barcodes, bias=bias, device = device)
         # self.e2c = nn.Linear(2*embedding_size, self.num_arms, bias=bias, device = device)
 
         # Use an LSTM??  Future model choice considerations
@@ -25,8 +27,8 @@ class Embedder(nn.Module):
 
         # Blow up and shrink down
         # self.h2m = nn.Linear(self.input_dim, 2*embedding_size, bias=bias, device = device)
-        # self.mdrope = nn.Dropout(0.5)
-        # self.m2e = nn.Linear(2*embedding_size, 1*embedding_size, bias=bias, device = device)
+        self.mdrope = nn.Dropout(0.5)
+        self.m2e = nn.Linear(2*embedding_size, 1*embedding_size, bias=bias, device = device)
         # self.edropc = nn.Dropout(0.5)
         # self.e2c = nn.Linear(1*embedding_size, self.num_barcodes, bias=bias, device = device)
 
@@ -43,15 +45,12 @@ class Embedder(nn.Module):
     # Model should return an embedding and a context
     def forward(self, h):
         x = F.leaky_relu(self.h2m(h))
-        # x = self.mdrope(x)
-        # x = F.leaky_relu(self.m2e(x))
+        x = self.mdrope(x)
+        x = self.m2e(x)
         embedding = x
         # x1 = self.edropc(x)
-        predicted_context = self.e2c(x)
+        predicted_context = self.e2c(F.leaky_relu(x))
         return embedding, predicted_context
-
-    def forward_predict_bc(self, embedding):
-        return self.e2c(embedding)
 
     def reset_parameter(self):
         for name, wts in self.named_parameters():
