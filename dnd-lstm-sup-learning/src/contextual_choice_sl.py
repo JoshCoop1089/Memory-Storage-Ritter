@@ -590,7 +590,7 @@ def plot_tsne_distribution(keys, labels, arms, mapping, fig, axes, idx_mem):
     for idx, c_id in enumerate(labels):
         classes[c_id].append(idx)
 
-    marker_list = ['x', 'o', '*', 'v', '.', '^', '<', '>', '+', 's']
+    marker_list = ['x', '1', 'o', '*', '2', 'v', '.', '^','3', '<', '>', '4', '+', 's']
     color_list = ['b', 'g', 'r', 'c', 'm', 'y', 'k', 'w']
     for m_id, (c_id, indices) in enumerate(classes.items()):
         # extract the coordinates of the points of this class only
@@ -641,20 +641,7 @@ def get_barcode_ids(barcode_id_list, real, predicted):
     pred_id = barcode_id_list.index(predicted)
     return real_id, pred_id
 
-if __name__  == '__main__':
-    exp_settings = {}
-
-    ### Hyperparams in BayesOpt ###
-    # Set in get_hyperparams function, below values are placeholders
-    exp_settings['dim_hidden_a2c'] = 0
-    exp_settings['dim_hidden_lstm'] = 0
-    exp_settings['entropy_error_coef'] = 0
-    exp_settings['lstm_learning_rate'] = 0
-    exp_settings['value_error_coef'] = 0
-    exp_settings['embedding_size'] = 0
-    exp_settings['embedder_learning_rate'] = 0
-
-    def get_hyperparams(mem_store, num_arms, exp_settings):
+def get_hyperparams(mem_store, num_arms, exp_settings):
         """
         Quick access to best hyperparams as found by bayesian_opt.py
 
@@ -704,6 +691,20 @@ if __name__  == '__main__':
             exp_settings['embedder_learning_rate'] = 10**-3.0399    #9.1e-4
         return exp_settings
 
+def run_experiment(exp_base, exp_difficulty):
+
+    exp_settings = {}
+
+    ### Hyperparams in BayesOpt ###
+    # Set in get_hyperparams function, below values are placeholders
+    exp_settings['dim_hidden_a2c'] = 0
+    exp_settings['dim_hidden_lstm'] = 0
+    exp_settings['entropy_error_coef'] = 0
+    exp_settings['lstm_learning_rate'] = 0
+    exp_settings['value_error_coef'] = 0
+    exp_settings['embedding_size'] = 0
+    exp_settings['embedder_learning_rate'] = 0
+
     ### End Hyperparams in BayesOpt ###
 
     ### Experimental Parameters ###
@@ -725,13 +726,13 @@ if __name__  == '__main__':
     exp_settings['barcode_size'] = 0
     exp_settings['num_barcodes'] = 0
     exp_settings['pulls_per_episode'] = 10
-    exp_settings['epochs'] = 500
+    exp_settings['epochs'] = 1200
 
     # Task Complexity
     exp_settings['noise_percent'] = [0.25, 0.5, 0.75, 0.875]
-    exp_settings['noise_eval_epochs'] = 50
+    exp_settings['noise_eval_epochs'] = 5
     exp_settings['sim_threshold'] = 0.5         #Cosine similarity threshold for clustering
-    exp_settings['hamming_threshold'] = 1       #Hamming distance for clustering
+    exp_settings['hamming_threshold'] = 5       #Hamming distance for clustering
     exp_settings['embedder_arm_trained'] = False
 
     # Data Logging
@@ -744,22 +745,30 @@ if __name__  == '__main__':
     f1, axs = plt.subplots(1, 1, figsize=(6, 6))
     f3, axes3 = plt.subplots(1, 2, figsize=(12, 6))
 
-    mem_store_types = ['context', 'embedding']
-    num_arms = 2
-    num_repeats = 4
+    # Forced Hyperparams
+    exp_settings['torch_device'] = 'GPU'
+    exp_settings['dim_hidden_a2c'] = int(2**8.644)        #400
+    exp_settings['dim_hidden_lstm'] = int(2**8.655)       #403
+    exp_settings['entropy_error_coef'] = 0.0391
+    exp_settings['lstm_learning_rate'] = 10**-3.332       #4.66e-4
+    exp_settings['value_error_coef'] = 0.62
+    exp_settings['embedding_size'] = int(2**8.629)          #395
+    exp_settings['embedder_learning_rate'] = 10**-3.0399    #9.1e-4
+
+    # Experimental Variables
+    mem_store_types, exp_settings['epochs'], exp_settings['noise_eval_epochs'], num_repeats = exp_base
+    exp_settings['hamming_threshold'], exp_settings['num_arms'], exp_settings['num_barcodes'], exp_settings[
+        'barcode_size'], exp_settings['pulls_per_episode'] = exp_difficulty
+
+    # Safety Assertions
+    assert exp_settings['epochs'] > 10, "Training epochs must be greater than 10"
+    assert exp_settings['pulls_per_episode'] > 2, "Pulls per episode must be greater than 2"
+    assert exp_settings['barcode_size'] > 3*exp_settings['hamming_threshold'], "Barcodes must be greater than 3*Hamming"
 
     for idx_mem, mem_store in enumerate(mem_store_types):
         tot_rets = np.zeros(exp_settings['epochs']+exp_settings['noise_eval_epochs']*len(exp_settings['noise_percent']))
-        exp_settings = get_hyperparams(mem_store, num_arms, exp_settings)
+        exp_settings['mem_store'] = mem_store
         for i in range(num_repeats):
-            exp_settings['torch_device'] = 'GPU'
-            exp_settings['dim_hidden_a2c'] = int(2**8.644)        #400
-            exp_settings['dim_hidden_lstm'] = int(2**8.655)       #403
-            exp_settings['entropy_error_coef'] = 0.0391
-            exp_settings['lstm_learning_rate'] = 10**-3.332       #4.66e-4
-            exp_settings['value_error_coef'] = 0.62
-            exp_settings['num_barcodes'] = 4
-            exp_settings['barcode_size'] = 16
 
             print(f"\nNew Run --> Iteration: {i} | Type: {mem_store} | Device: {exp_settings['torch_device']}")
             logs, key_data = run_experiment_sl(exp_settings)
@@ -770,18 +779,18 @@ if __name__  == '__main__':
 
         smoothed_rewards = pd.Series.rolling(pd.Series(tot_rets), 15).mean()
         smoothed_rewards = [elem for elem in smoothed_rewards]
-        axes[0].plot(smoothed_rewards, label=f'Arms/BC:{num_arms} | Mem: {mem_store}')
+        axes[0].plot(smoothed_rewards, label=f"Arms/BC:{exp_settings['num_arms']} | Mem: {mem_store}")
 
         # Only graphing the loss on the final trial if there are multiple repeats
         smoothed_loss = pd.Series.rolling(pd.Series(log_loss_total), 15).mean()
         smoothed_loss = [elem for elem in smoothed_loss]
         axes[1].plot(
-            smoothed_loss, label=f'Arms/BC:{num_arms} | Mem: {mem_store}')
+            smoothed_loss, label=f"Arms/BC:{exp_settings['num_arms']} | Mem: {mem_store}")
 
         # Embedder/Mem Accuracy 
         smoothed_accuracy = pd.Series.rolling(pd.Series(log_embedder_accuracy), 15).mean()
         smoothed_accuracy = [elem for elem in smoothed_accuracy]
-        axs.plot(smoothed_accuracy, label=f'Arms/BC:{num_arms} | Mem: {mem_store}')
+        axs.plot(smoothed_accuracy, label=f"Arms/BC:{exp_settings['num_arms']} | Mem: {mem_store}")
 
         embeddings = [x[0] for x in keys]
         labels = [x[1] for x in keys]
@@ -882,4 +891,12 @@ if __name__  == '__main__':
     f3.tight_layout()
     f3.subplots_adjust(top=0.8)
     f3.suptitle("t-SNE on keys in memory from last training epoch\nIcon indicates barcode, color is best arm choice")
+    fig_nums = plt.get_fignums()
+    figs = [plt.figure(n) for n in fig_nums]
+    file_loc = "..\\Memory-Storage-Ritter\\dnd-lstm-sup-learning\\figs\\Saved_Plots\\"
+    exp_id = f"{exp_settings['num_arms']}a{exp_settings['num_barcodes']}b{exp_settings['pulls_per_episode']}p {exp_settings['hamming_threshold']} hamming "
+    plot_type = ['returns', 'accuracy', 'tsne']
+    for fig_num, figa in enumerate([f, f1, f3]):
+        filename = file_loc + exp_id + plot_type[fig_num] +".png"
+        figa.savefig(filename)
     plt.show()
