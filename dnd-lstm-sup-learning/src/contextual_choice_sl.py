@@ -165,7 +165,7 @@ def run_experiment_sl(exp_settings):
         # see exp_settings['reset_barcodes_per_epoch']
         # get data for this epoch
         if exp_settings['task_version'] == 'bandit':
-            observations_barcodes_rewards, epoch_mapping, barcode_strings, barcode_tensors, barcode_id = task.sample()
+            observations_barcodes_rewards, epoch_mapping, barcode_strings, barcode_tensors, barcode_id, arm_id = task.sample()
             agent.dnd.mapping = epoch_mapping
             # print(observations_barcodes)
 
@@ -267,10 +267,11 @@ def run_experiment_sl(exp_settings):
                             # Reset the one_hot var 
                             one_hot_action[0][a_t] = 0.0
 
-                    # if exp_settings['num_arms'] != exp_settings['num_barcodes']:
-                    #     memory_loss_id = arm_id[m]
-                    # else:
-                    memory_loss_id = barcode_id[m]
+
+                    if exp_settings['embedder_arm_trained']:
+                        memory_loss_id = arm_id[m]
+                    else:
+                        memory_loss_id = barcode_id[m]
 
                     mem_key = barcode_tensors[m] if i < exp_settings['epochs'] else noisy_bc
 
@@ -291,7 +292,21 @@ def run_experiment_sl(exp_settings):
                                                             epoch_mapping, device, perfect_info)
 
                     # Does the predicted context match the actual context?
-                    embedder_accuracy += int(real_bc == assumed_barcode_string)
+                    if exp_settings['embedder_arm_trained']:
+                        # Training the embedder on arm choice overloads the assumed_barcode_string
+                        #  return with the arm prediction for the embedder
+                        if exp_settings['mem_store'] == 'embedding':
+                            try:
+                                real_arm = epoch_mapping[real_bc]
+                                assumed_arm = assumed_barcode_string
+                                embedder_accuracy += int(real_arm == assumed_arm)
+                            except KeyError: #returning empty barcodes at beginning of episode
+                                #Yes i know this is dumb, but it's mostly a reminder to me as to what is happening here
+                                embedder_accuracy += 0
+                        else:
+                            embedder_accuracy += int(real_bc == assumed_barcode_string)
+                    else:
+                        embedder_accuracy += int(real_bc == assumed_barcode_string)
                     # print(real_bc, assumed_barcode_string)
 
                     # # Confusion Matrix for Embedder Predictions
@@ -584,6 +599,8 @@ def plot_tsne_distribution(keys, labels, arms, mapping, fig, axes, idx_mem):
 
         # Identify the arm of the barcode
         arm = mapping[c_id]
+
+        # Graph arms by color and barcodes by marker
         axes[idx_mem].scatter(current_tx, current_ty, c = color_list[arm], marker = marker_list[m_id])
 
     return fig, axes
@@ -708,17 +725,18 @@ if __name__  == '__main__':
     exp_settings['barcode_size'] = 0
     exp_settings['num_barcodes'] = 0
     exp_settings['pulls_per_episode'] = 10
-    exp_settings['epochs'] = 1000
+    exp_settings['epochs'] = 500
 
     # Task Complexity
     exp_settings['noise_percent'] = [0.25, 0.5, 0.75, 0.875]
-    exp_settings['noise_eval_epochs'] = 100
+    exp_settings['noise_eval_epochs'] = 50
     exp_settings['sim_threshold'] = 0.5         #Cosine similarity threshold for clustering
-    exp_settings['hamming_threshold'] = 5       #Hamming distance for clustering
+    exp_settings['hamming_threshold'] = 1       #Hamming distance for clustering
+    exp_settings['embedder_arm_trained'] = False
 
     # Data Logging
     exp_settings['tensorboard_logging'] = False
-    exp_settings['timing'] = True
+    exp_settings['timing'] = False
     ### End of Experimental Parameters ###
 
     ### Beginning of Experimental Runs ###
@@ -727,8 +745,8 @@ if __name__  == '__main__':
     f3, axes3 = plt.subplots(1, 2, figsize=(12, 6))
 
     mem_store_types = ['context', 'embedding']
-    num_arms = 3
-    num_repeats = 3
+    num_arms = 2
+    num_repeats = 4
 
     for idx_mem, mem_store in enumerate(mem_store_types):
         tot_rets = np.zeros(exp_settings['epochs']+exp_settings['noise_eval_epochs']*len(exp_settings['noise_percent']))
@@ -740,7 +758,7 @@ if __name__  == '__main__':
             exp_settings['entropy_error_coef'] = 0.0391
             exp_settings['lstm_learning_rate'] = 10**-3.332       #4.66e-4
             exp_settings['value_error_coef'] = 0.62
-            exp_settings['num_barcodes'] = 6
+            exp_settings['num_barcodes'] = 4
             exp_settings['barcode_size'] = 16
 
             print(f"\nNew Run --> Iteration: {i} | Type: {mem_store} | Device: {exp_settings['torch_device']}")
@@ -769,12 +787,11 @@ if __name__  == '__main__':
         labels = [x[1] for x in keys]
 
         # Map the keys to their predicted best arm pull
-        if mem_store == 'context':
+        if mem_store == 'context' or not exp_settings['embedder_arm_trained']:
             arm_pred = [epoch_mapping[x] for x in labels]
         else:
-            rev_pred = {v:k for k,v in prediction_mapping.items()}
-            labels = [rev_pred[x] for x in labels]
-            arm_pred = [epoch_mapping[x] for x in labels]
+            arm_pred = labels
+            labels = [x[2][0] for x in keys]
 
         f3, axes3 = plot_tsne_distribution(embeddings, labels, arm_pred, epoch_mapping, f3, axes3, idx_mem)
         axes3[idx_mem].xaxis.set_visible(False)
@@ -821,7 +838,8 @@ if __name__  == '__main__':
     Val Loss Coef: {exp_settings['value_error_coef']}| Entropy Loss Coef: | {exp_settings['entropy_error_coef']}
     Embedding Dim: {exp_settings['embedding_size']} | Embedder LR: {round(exp_settings['embedder_learning_rate'], 5)} 
     Epochs: {exp_settings['epochs']} | Unique Barcodes: {exp_settings['num_barcodes']} | Barcode Dim: {exp_settings['barcode_size']}
-    Arms: {exp_settings['num_arms']} | Pulls per Trial: {exp_settings['pulls_per_episode']} | Perfect Arms: {exp_settings['perfect_info']}"""
+    Arms: {exp_settings['num_arms']} | Pulls per Trial: {exp_settings['pulls_per_episode']} | Perfect Arms: {exp_settings['perfect_info']}
+    Clusters: {int(exp_settings['num_barcodes']/exp_settings['num_arms'])} | IntraCluster Dist: {exp_settings['hamming_threshold']} | InterCluster Dist: {exp_settings['barcode_size']-2*exp_settings['hamming_threshold']}"""
 
     # Returns
     if exp_settings['task_version'] == 'bandit':
@@ -862,5 +880,6 @@ if __name__  == '__main__':
     f.suptitle(graph_title)
     f1.tight_layout()
     f3.tight_layout()
+    f3.subplots_adjust(top=0.8)
     f3.suptitle("t-SNE on keys in memory from last training epoch\nIcon indicates barcode, color is best arm choice")
     plt.show()

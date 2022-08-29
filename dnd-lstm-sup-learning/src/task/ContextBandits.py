@@ -108,7 +108,7 @@ class ContextualBandit():
             else:
                 self.epoch_mapping = self.map_arms_to_barcodes(self.epoch_mapping)
 
-        observation_p1, reward_p1, barcode_p1, barcode_strings, barcode_id = self.generate_trials_info(self.epoch_mapping)
+        observation_p1, reward_p1, barcode_p1, barcode_strings, barcode_id, arm_id = self.generate_trials_info(self.epoch_mapping)
         obs_barcodes_rewards = np.dstack([observation_p1, barcode_p1, reward_p1])
 
         # to pytorch form
@@ -116,7 +116,8 @@ class ContextualBandit():
             obs_barcodes_rewards = to_pth(obs_barcodes_rewards).to(self.device)
             barcode_tensors = to_pth(barcode_p1).to(self.device)
             barcode_ids = to_pth(barcode_id, pth_dtype=torch.long).to(self.device)
-        return obs_barcodes_rewards, self.epoch_mapping, barcode_strings, barcode_tensors, barcode_ids
+            arm_ids = to_pth(arm_id, pth_dtype=torch.long).to(self.device)
+        return obs_barcodes_rewards, self.epoch_mapping, barcode_strings, barcode_tensors, barcode_ids, arm_ids
 
     def hamming_distance(self, barcode1, barcode2):
         return sum(c1 != c2 for c1, c2 in zip(barcode1, barcode2))
@@ -290,13 +291,14 @@ class ContextualBandit():
         barcodes = np.zeros((self.num_barcodes**2, self.pulls_per_episode, self.barcode_size))
         barcodes_strings = np.zeros((self.num_barcodes**2, self.pulls_per_episode, 1), dtype=object)
         barcodes_id = np.zeros((self.num_barcodes**2, 1))
+        arms_id = np.zeros((self.num_barcodes**2, 1))
 
         for episode_num, barcode in enumerate(trial_barcode_bag):
             lstm_inputs, pre_comp_tensors = self.generate_one_episode(barcode, mapping)
             observations[episode_num], rewards[episode_num], barcodes[episode_num] = lstm_inputs
-            barcodes_strings[episode_num], barcodes_id[episode_num] = pre_comp_tensors
+            barcodes_strings[episode_num], barcodes_id[episode_num], arms_id[episode_num] = pre_comp_tensors
 
-        return observations, rewards, barcodes, barcodes_strings, barcodes_id
+        return observations, rewards, barcodes, barcodes_strings, barcodes_id, arms_id
 
     def generate_one_episode(self, barcode, mapping):
         """
@@ -349,7 +351,7 @@ class ContextualBandit():
         bar_id = self.sorted_bcs.index(barcode)
 
         lstm_inputs = trial_pulls, trial_rewards, bar_ar
-        pre_comp_tensors = bar_strings, bar_id
+        pre_comp_tensors = bar_strings, bar_id, best_arm
 
         return lstm_inputs, pre_comp_tensors
 

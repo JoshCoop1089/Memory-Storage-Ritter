@@ -127,9 +127,9 @@ class DND():
         self.trial_hidden_states = [keys[i] for i in range(len(keys)) if keys[i] != () and i > len(keys)//4]
         # print(trial_hidden_states)
 
-        for embedding, context_location, _ in self.trial_hidden_states:
+        for embedding, context_location, _, real_bc in self.trial_hidden_states:
             # Append new memories at head of list to allow sim search to find these first?
-            self.keys = [[torch.squeeze(embedding.data), context_location]] + self.keys
+            self.keys = [[torch.squeeze(embedding.data), context_location, real_bc]] + self.keys
             self.vals = [torch.squeeze(memory_val.data)] + self.vals
 
         while len(self.keys) > self.dict_len:
@@ -419,26 +419,10 @@ class DND():
         pred_memory_id = torch.argmax(soft)
         # print(best_memory_id)
         # print(key_list)
-        predicted_context = self.sorted_key_list[pred_memory_id]
-
-        # Task not yet seen, no stored LSTM yet
-        if predicted_context not in self.key_context_map:
-            self.key_context_map[predicted_context] = self.context_counter
-            context_location = self.context_counter
-            # self.keys.append([])
-            # self.vals.append(0)
-            self.context_counter += 1
-            # best_memory_val = _empty_memory(
-            #     self.hidden_lstm_dim, device=self.device)
-
-        # Task seen before, get LSTM attached to task
+        if not self.exp_settings['embedder_arm_trained']:
+            predicted_context = self.sorted_key_list[pred_memory_id]
         else:
-            context_location = self.key_context_map[predicted_context]
-            # best_memory_val = self.vals[context_location]
-
-            # # Task was ID'd in this epoch already, but there hasn't been an LSTM stored for it yet
-            # if type(best_memory_val) is int:
-            #     best_memory_val = _empty_memory(self.hidden_lstm_dim, device = self.device)
+            predicted_context = pred_memory_id.item()
 
         key_list = [self.keys[x][0] for x in range(
             len(self.keys)) if self.keys[x] != []]
@@ -453,11 +437,11 @@ class DND():
         
         # If nothing is stored in memory yet, return 0's
         else:
-            self.trial_buffer.append((embedding, context_location, emb_loss))
+            self.trial_buffer.append((embedding, predicted_context, emb_loss, real_label_as_string))
             return _empty_memory(self.hidden_lstm_dim, device=self.device), _empty_barcode(self.exp_settings['barcode_size'])
         
         # Store embedding and predicted class label memory index in trial_buffer
-        self.trial_buffer.append((embedding, context_location, emb_loss))
+        self.trial_buffer.append((embedding, predicted_context, emb_loss, real_label_as_string))
         return best_memory_val, predicted_context
 
     def get_memory_non_embedder(self, query_key):
