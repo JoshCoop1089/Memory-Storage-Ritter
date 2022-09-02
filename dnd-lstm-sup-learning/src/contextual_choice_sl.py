@@ -86,7 +86,7 @@ def run_experiment_sl(exp_settings):
     # Cluster barcodes at the start (Only use one per experiment)
     sim_threshold = exp_settings['sim_threshold']
     hamming_threshold = exp_settings['hamming_threshold']
-    assert (hamming_threshold > 0 and hamming_threshold < barcode_size) or (hamming_threshold == 0 and sim_threshold) 
+    assert (hamming_threshold == 0) or (hamming_threshold > 0 and 3*hamming_threshold < barcode_size)
 
     # Task Choice
     if exp_settings['task_version'] == 'bandit':
@@ -266,7 +266,6 @@ def run_experiment_sl(exp_settings):
 
                             # Reset the one_hot var 
                             one_hot_action[0][a_t] = 0.0
-
 
                     if exp_settings['embedder_arm_trained']:
                         memory_loss_id = arm_id[m]
@@ -709,7 +708,7 @@ def run_experiment(exp_base, exp_difficulty):
 
     ### Experimental Parameters ###
     exp_settings['randomize'] = True
-    exp_settings['perfect_info'] = False
+    exp_settings['perfect_info'] = False            #Make arms 100%/0% reward instead of 90%/10%
     exp_settings['reset_barcodes_per_epoch'] = False
     exp_settings['reset_arms_per_epoch'] = True
     exp_settings['lstm_inputs_looped'] = True       # Use action predictions from lstm as next input, instead of predetermined pulls
@@ -758,7 +757,7 @@ def run_experiment(exp_base, exp_difficulty):
     # Experimental Variables
     mem_store_types, exp_settings['epochs'], exp_settings['noise_eval_epochs'], num_repeats = exp_base
     exp_settings['hamming_threshold'], exp_settings['num_arms'], exp_settings['num_barcodes'], exp_settings[
-        'barcode_size'], exp_settings['pulls_per_episode'] = exp_difficulty
+        'barcode_size'], exp_settings['pulls_per_episode'], exp_settings['sim_threshold'] = exp_difficulty
 
     # Safety Assertions
     assert exp_settings['epochs'] > 10, "Training epochs must be greater than 10"
@@ -777,21 +776,22 @@ def run_experiment(exp_base, exp_difficulty):
             tot_rets += log_return/num_repeats
             # print(tot_rets)
 
-        smoothed_rewards = pd.Series.rolling(pd.Series(tot_rets), 15).mean()
+        smoothed_rewards = pd.Series.rolling(pd.Series(tot_rets), 30).mean()
         smoothed_rewards = [elem for elem in smoothed_rewards]
-        axes[0].plot(smoothed_rewards, label=f"Arms/BC:{exp_settings['num_arms']} | Mem: {mem_store}")
+        axes[0].plot(smoothed_rewards, label=f"Mem: {mem_store}")
 
         # Only graphing the loss on the final trial if there are multiple repeats
-        smoothed_loss = pd.Series.rolling(pd.Series(log_loss_total), 15).mean()
+        smoothed_loss = pd.Series.rolling(pd.Series(log_loss_total), 30).mean()
         smoothed_loss = [elem for elem in smoothed_loss]
         axes[1].plot(
-            smoothed_loss, label=f"Arms/BC:{exp_settings['num_arms']} | Mem: {mem_store}")
+            smoothed_loss, label=f"Mem: {mem_store}")
 
         # Embedder/Mem Accuracy 
-        smoothed_accuracy = pd.Series.rolling(pd.Series(log_embedder_accuracy), 15).mean()
+        smoothed_accuracy = pd.Series.rolling(pd.Series(log_embedder_accuracy), 30).mean()
         smoothed_accuracy = [elem for elem in smoothed_accuracy]
-        axs.plot(smoothed_accuracy, label=f"Arms/BC:{exp_settings['num_arms']} | Mem: {mem_store}")
+        axs.plot(smoothed_accuracy, label=f"Mem: {mem_store}")
 
+        # T-SNE to visualize keys in memory
         embeddings = [x[0] for x in keys]
         labels = [x[1] for x in keys]
 
@@ -801,6 +801,12 @@ def run_experiment(exp_base, exp_difficulty):
         else:
             arm_pred = labels
             labels = [x[2][0] for x in keys]
+
+        # Artifically boost datapoint count to make tsne nicer?
+        while len(embeddings) < 100:
+            embeddings.extend(embeddings)
+            arm_pred.extend(arm_pred)
+            labels.extend(labels)
 
         f3, axes3 = plot_tsne_distribution(embeddings, labels, arm_pred, epoch_mapping, f3, axes3, idx_mem)
         axes3[idx_mem].xaxis.set_visible(False)
@@ -856,14 +862,13 @@ def run_experiment(exp_base, exp_difficulty):
         num_eps = num_bc**2
         perfect_ret, random_ret = expected_return(exp_settings['num_arms'], exp_settings['perfect_info'])
         axes[0].axhline(y = random_ret, color='b', linestyle='dashed', label = 'Random Pulls')
+        axes[0].axhline(y=perfect_ret, color='k', linestyle='dashed', label = 'Theoretical Max')
         colors = ['g', 'r', 'c', 'm']
         for idx, noise_percent in enumerate(exp_settings['noise_percent']):
             axes[0].axvline(x=exp_settings['epochs'] + idx*exp_settings['noise_eval_epochs'], color=colors[idx], linestyle = 'dashed',\
                 label = f"{int(exp_settings['barcode_size']*noise_percent)} Bits Noisy")
             axs.axvline(x=exp_settings['epochs'] + idx*exp_settings['noise_eval_epochs'], color=colors[idx], linestyle='dashed',
                 label = f"{int(exp_settings['barcode_size']*noise_percent)} Bits Noisy")
-        # perf_learned_value = (random_ret*num_bc + perfect_ret*(num_eps-num_bc))/num_eps
-        # axes[0].axhline(y=perf_learned_value, color='r', linestyle='dashed', label = 'Perfect Pulls')
     axes[0].set_ylabel('Returns')
     axes[0].set_xlabel('Epoch')
     axes[0].legend(bbox_to_anchor=(0, -0.2, 1, 0), loc="upper left",
@@ -894,7 +899,7 @@ def run_experiment(exp_base, exp_difficulty):
     fig_nums = plt.get_fignums()
     figs = [plt.figure(n) for n in fig_nums]
     file_loc = "..\\Memory-Storage-Ritter\\dnd-lstm-sup-learning\\figs\\Saved_Plots\\"
-    exp_id = f"{exp_settings['num_arms']}a{exp_settings['num_barcodes']}b{exp_settings['pulls_per_episode']}p {exp_settings['hamming_threshold']} hamming "
+    exp_id = f"{exp_settings['num_arms']}a{exp_settings['num_barcodes']}b{exp_settings['pulls_per_episode']}p {exp_settings['hamming_threshold']} hamming {num_repeats} run(s) "
     plot_type = ['returns', 'accuracy', 'tsne']
     for fig_num, figa in enumerate([f, f1, f3]):
         filename = file_loc + exp_id + plot_type[fig_num] +".png"

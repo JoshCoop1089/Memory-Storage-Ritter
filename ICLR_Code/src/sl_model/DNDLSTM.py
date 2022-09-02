@@ -33,7 +33,6 @@ class DNDLSTM(nn.Module):
         # dnd
         self.dnd = DND(dict_len, dim_hidden_lstm, exp_settings, self.device)
         #policy
-        # self.a2c = A2C_linear(dim_hidden_lstm, dim_output_lstm).to(self.device)
         self.a2c = A2C(dim_hidden_lstm, self.dim_hidden_a2c, dim_output_lstm, device = self.device)
 
         # For some reason, if this is activated, the Embedder never learns, even though the embedder layers arent touched by this
@@ -50,17 +49,8 @@ class DNDLSTM(nn.Module):
 
     def forward(self, obs_bar_reward, barcode_string, barcode_tensor, barcode_id, h, c):
 
-        forward_start = time.perf_counter()
-
         # Into LSTM
-        if self.exp_settings['agent_input'] == 'obs/context':
-            x_t = obs_bar_reward
-        elif self.exp_settings['agent_input'] == 'obs':
-            # This would only be needed for QiHongs og task, and I don't think this will work like I want it to
-            x_t = obs_bar_reward[0][:self.exp_settings['num_arms']].view(1, self.exp_settings['num_arms'])
-        else:
-            raise ValueError('Incorrect agent_input type')
-        # print(x_t)
+        x_t = obs_bar_reward
 
         # Used for memory search/storage (non embedder versions)
         if self.exp_settings['mem_store'] != 'embedding':
@@ -68,19 +58,15 @@ class DNDLSTM(nn.Module):
                 q_t = barcode_tensor
             elif self.exp_settings['mem_store'] == 'obs/context':
                 q_t = obs_bar_reward
+            elif self.exp_settings['mem_store'] == 'hidden':
+                q_t = h
             else:
                 raise ValueError('Incorrect mem_store type')
-        
-        if self.exp_settings['timing']:
-            forward_prep = time.perf_counter() - forward_start
 
         # transform the input info
         Wx = self.i2h(x_t)
         Wh = self.h2h(h)
         preact = Wx + Wh
-
-        if self.exp_settings['timing']:
-            forward_preact = time.perf_counter() - forward_prep - forward_start
 
         # get all gate values
         gates = preact[:, : N_GATES * self.dim_hidden_lstm].sigmoid()
@@ -97,9 +83,6 @@ class DNDLSTM(nn.Module):
         # new cell state = gated(prev_c) + gated(new_stuff)
         c_t = torch.mul(f_t, c) + torch.mul(i_t, c_t_new)
         
-        if self.exp_settings['timing']:
-            forward_gate = time.perf_counter() - forward_prep - forward_preact - forward_start
-
         if self.exp_settings['mem_store'] == 'embedding':
             # Freeze all LSTM Layers before getting memory
             layers = [self.i2h, self.h2h, self.a2c]
@@ -115,21 +98,15 @@ class DNDLSTM(nn.Module):
             for layer in layers:
                 for name, param in layer.named_parameters():
                     param.requires_grad = True 
-                # print(name, param.data)
-
         else:
             mem, predicted_barcode = self.dnd.get_memory_non_embedder(q_t)
             m_t = mem.tanh()
-        
-        if self.exp_settings['timing']:
-            forward_get_mem = time.perf_counter() - forward_prep - forward_preact - forward_gate - forward_start
 
         # gate the memory; in general, can be any transformation of it
         c_t = c_t + torch.mul(r_t, m_t)
         # get gated hidden state from the cell state
         h_t = torch.mul(o_t, c_t.tanh())
 
-        forward_save = 0
         # Saving memory happens once at the end of every episode
         if not self.dnd.encoding_off:
             if self.exp_settings['mem_store'] == 'embedding':
@@ -140,25 +117,14 @@ class DNDLSTM(nn.Module):
             else:
                 self.dnd.save_memory_non_embedder(q_t, barcode_tensor, c_t)
 
-            if self.exp_settings['timing']:
-                forward_save = time.perf_counter() - forward_get_mem - forward_prep - \
-                    forward_preact - forward_gate - forward_start
-
         # policy
         pi_a_t, v_t, entropy = self.a2c.forward(h_t)
         # pick an action
         a_t, prob_a_t = self.pick_action(pi_a_t)
-
-        timings = {}
-        if self.exp_settings['timing']:
-            forward_action = time.perf_counter() - forward_save - forward_get_mem - forward_prep - \
-                forward_preact - forward_gate - forward_start
-            timings = { "1a. Prep": forward_prep, "1b. PreAct": forward_preact, "1c. Gate": forward_gate,
-                        "1d. Get_mem": forward_get_mem, "1e. Action": forward_action, "1f. Save_mem": forward_save}
         
         # fetch activity
         output = (a_t, predicted_barcode, prob_a_t, v_t, entropy, h_t, c_t)
-        cache = (f_t, i_t, o_t, r_t, m_t, timings)
+        cache = (f_t, i_t, o_t, r_t, m_t)
 
         return output, cache
 
@@ -203,23 +169,7 @@ class DNDLSTM(nn.Module):
     def reset_memory(self):
         self.dnd.reset_memory()
 
-    def get_all_mems(self):
-        n_mems = len(self.dnd.keys)
-        K = [self.dnd.keys[i] for i in range(n_mems)]
-        V = [self.dnd.vals[i] for i in range(n_mems)]
-        return K, V
-
     def get_all_mems_embedder(self):
         mem_keys = self.dnd.keys
         predicted_mapping_to_keys = self.dnd.key_context_map
         return mem_keys, predicted_mapping_to_keys
-
-    def difference_of_weights(self, prior_vals):
-        layers = [self.i2h, self.h2h, self.a2c]
-        for layer_after, layer_before in zip(layers, prior_vals):
-            for (name, param_after), (name, param_before) in zip(layer_after.named_parameters(), layer_before.named_parameters()):
-                try:
-                    diff = torch.sub(param_after.grad, param_before.grad)
-                    print(name, diff)
-                except Exception:
-                    continue
