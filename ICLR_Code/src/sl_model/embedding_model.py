@@ -15,8 +15,11 @@ class Embedder(nn.Module):
         self.num_barcodes = exp_settings['num_barcodes']
         self.num_arms = exp_settings['num_arms']
 
+        embed_size_check = int(2*embedding_size)
+
         # Basic Layers
         self.h2m = nn.Linear(self.input_dim, 2*embedding_size, bias=bias, device = device)
+        # self.m2c = nn.Linear(embedding_size, 2*embedding_size, bias=bias, device = device)
         self.e2c = nn.Linear(2*embedding_size, self.num_barcodes, bias=bias, device = device)
 
         # init
@@ -25,6 +28,8 @@ class Embedder(nn.Module):
     # Model should return an embedding and a context
     def forward(self, h):
         x = self.h2m(h)
+        # x = nn.Dropout()(x)
+        # x = self.m2c(F.leaky_relu(x))
         embedding = x
         predicted_context = self.e2c(F.leaky_relu(x))
         return embedding, predicted_context

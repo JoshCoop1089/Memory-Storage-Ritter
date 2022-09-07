@@ -141,10 +141,10 @@ class ContextualBandit():
             if new_seed:
                 new_seed = False
                 continue
-
-            # barcode -> string starts out at '[1 1 0]', thus the reductions on the end
-            barcode_string = np.array2string(barcode)[1:-1].replace(" ", "")
-            barcode_bag.add(barcode_string)
+            else:
+                # barcode -> string starts out at '[1 1 0]', thus the reductions on the end
+                barcode_string = np.array2string(barcode)[1:-1].replace(" ", "")
+                barcode_bag.add(barcode_string)
 
         # Barcode_bag now holds distinct cluster start points, create close clusters around those points
         bc_clusters = list(barcode_bag)

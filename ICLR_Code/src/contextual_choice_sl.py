@@ -1,10 +1,11 @@
 """demo: train a DND LSTM on a contextual choice task
 """
 # Win64bit Optimizations for TSNE
+from statsmodels.nonparametric.smoothers_lowess import lowess
 from sklearnex import patch_sklearn
 patch_sklearn()
 from sklearn.manifold import TSNE
-import time
+import time, random
 import torch
 import numpy as np
 import seaborn as sns
@@ -60,9 +61,9 @@ def run_experiment_sl(exp_settings):
    
     '''init task'''
     # input/output/hidden/memory dim
-    num_arms = exp_settings['num_arms']             # LSTM input dim
-    barcode_size = exp_settings['barcode_size']     # Possible additional LSTM input dim
-    num_barcodes = exp_settings['num_barcodes']     # Different number of contexts
+    num_arms = exp_settings['num_arms']
+    barcode_size = exp_settings['barcode_size']
+    num_barcodes = exp_settings['num_barcodes']
 
     # Arm pulls per single barcode episode
     pulls_per_episode = exp_settings['pulls_per_episode']
@@ -110,8 +111,6 @@ def run_experiment_sl(exp_settings):
     log_loss_policy = np.zeros(n_epochs,)
     log_loss_total = np.zeros(n_epochs,)
 
-    one_hot_action = torch.zeros((1,num_arms), dtype=torch.float32, device=device)
-
     print("\n", "-*-_-*- "*3, "\n")
     # loop over epoch
     for i in range(n_epochs):
@@ -125,7 +124,11 @@ def run_experiment_sl(exp_settings):
         agent.reset_memory()
         agent.turn_on_retrieval()
 
-        # How much noise is needed?
+        # Training with noise on?
+        if exp_settings['noise_train_percent'] > 0:
+            noise_barcode_flip_locs = int(exp_settings['noise_train_percent']*barcode_size)
+
+        # How much noise is needed in the evaluation stages?
         apply_noise = i-exp_settings['epochs']
         if apply_noise >= 0:
             noise_idx = apply_noise//exp_settings['noise_eval_epochs']
@@ -145,24 +148,36 @@ def run_experiment_sl(exp_settings):
             agent.flush_trial_buffer()
 
             # Noisy Barcodes are constant across an episode if needed
-            if apply_noise >= 0:
+            if apply_noise >= 0 or exp_settings['noise_train_percent'] > 0:
+                apply_noise_again = True
                 action = observations_barcodes_rewards[m][0][0:num_arms].view(1,-1)
-                noisy_bc = observations_barcodes_rewards[m][0][num_arms:-1].view(1,-1)
+                original_bc = observations_barcodes_rewards[m][0][num_arms:-1].view(1,-1)
                 reward = observations_barcodes_rewards[m][0][-1].view(
-                    1, -1)
-                
-                # What indicies need to be randomized?
-                idx = torch.multinomial(noisy_bc, noise_barcode_flip_locs)
+                        1, -1)
+                while apply_noise_again:
+                    apply_noise_again = False
+                    
+                    # What indicies need to be randomized?
+                    idx = random.sample(range(exp_settings['barcode_size']), noise_barcode_flip_locs)
 
-                # Do we flip the value at that index?
-                mask = torch.randint_like(idx, 0, 2)
+                    # # Flip the values at the indicies
+                    # mask = torch.tensor([1.0 for _ in idx], device = device)
 
-                # Applying the mask to the barcode
-                for idx1, mask1 in zip(idx[0], mask[0]):
-                    noisy_bc[0][idx1] = float(torch.ne(mask1,noisy_bc[0][idx1]))
+                    # Chance to flip the value at that index
+                    mask = torch.tensor([np.random.randint(0,2) for _ in idx], device = device)
+
+                    noisy_bc = original_bc.detach().clone()
+
+                    # Applying the mask to the barcode
+                    for idx1, mask1 in zip(idx, mask):
+                        noisy_bc[0][idx1] = float(torch.ne(mask1,noisy_bc[0][idx1]))
+
+                    #Cosine similarity doesn't like all 0's for matching
+                    if torch.sum(noisy_bc) == 0:
+                        apply_noise_again = True
 
                 # Remake the input
-                input_to_lstm = torch.cat(
+                noisy_init_input = torch.cat(
                     (action, noisy_bc, reward.view(1,1)), dim=1)
 
             # loop over time, for one training example
@@ -174,20 +189,20 @@ def run_experiment_sl(exp_settings):
                     agent.turn_on_encoding()
 
                 # First input when not noisy comes from task.sample
-                if t == 0 and i < exp_settings['epochs']:
-                    input_to_lstm = observations_barcodes_rewards[m]
+                if t == 0:
+                    if i < exp_settings['epochs'] and exp_settings['noise_train_percent'] == 0:
+                        input_to_lstm = observations_barcodes_rewards[m]
+                    else:
+                        input_to_lstm = noisy_init_input
 
                 # Using the output action and reward of the last step of the LSTM as the next input
                 else: #t != 0:
                     input_to_lstm = last_action_output
 
-                    # Reset the one_hot var 
-                    one_hot_action[0][a_t] = 0.0
-
                 # What is being stored for Ritter?
-                mem_key = barcode_tensors[m] if i < exp_settings['epochs'] else noisy_bc
+                mem_key = barcode_tensors[m] if (i < exp_settings['epochs'] and exp_settings['noise_train_percent'] == 0) else noisy_bc
 
-                output_t, _ = agent(input_to_lstm, barcode_strings[m][0], 
+                output_t, _ = agent(input_to_lstm, barcode_strings[m][0][0], 
                                         mem_key, barcode_id[m],
                                         h_t, c_t)
                 a_t, assumed_barcode_string, prob_a_t, v_t, entropy, h_t, c_t = output_t
@@ -209,11 +224,13 @@ def run_experiment_sl(exp_settings):
                 cumulative_reward += r_t
 
                 # Inputs to LSTM come from predicted actions and rewards of last time step
+                one_hot_action = torch.zeros((1,num_arms), dtype=torch.float32, device=device)
                 one_hot_action[0][a_t] = 1.0
                 next_bc = barcode_tensors[m]
 
                 # Add noise to the barcode at the right moments in experiment
-                if i >= n_epochs - exp_settings['noise_eval_epochs']:
+                if  (exp_settings['noise_train_percent'] and i < exp_settings['epochs']) or \
+                    (i >= exp_settings['epochs']):
                     next_bc = noisy_bc
 
                 # Create next input to feed back into LSTM
@@ -236,8 +253,6 @@ def run_experiment_sl(exp_settings):
 
                     # Unfreeze Embedder
                     for name, param in a_dnd.embedder.named_parameters():
-                        if param.requires_grad:
-                            print(name, param.grad)
                         param.requires_grad = True
 
                     # Freeze LSTM/A2C
@@ -359,9 +374,7 @@ def plot_tsne_distribution(keys, labels, mapping, fig, axes, idx_mem):
 
     marker_list = ['x', '1', 'o', '*', '2', 'v', '.', '^','3', '<', '>', '4', '+', 's']
     color_list = ['b', 'g', 'r', 'c', 'm', 'y', 'k', 'w']
-    assert len(classes) <= len(marker_list), "Too many distinct barcodes to display with current selection of labels"
-    assert max(list(mapping.values())) <= len(color_list), "Too many distinct arms to display with current selection of colors"
-
+    
     # Map each barcode as a seperate layer on the same scatterplot
     for m_id, (c_id, indices) in enumerate(classes.items()):
         # extract the coordinates of the points of this class only
@@ -381,7 +394,6 @@ def run_experiment(exp_base, exp_difficulty):
     exp_settings = {}
 
     ### Hyperparams in BayesOpt ###
-    # Set in get_hyperparams function, below values are placeholders
     exp_settings['dim_hidden_a2c'] = 0
     exp_settings['dim_hidden_lstm'] = 0
     exp_settings['entropy_error_coef'] = 0
@@ -393,12 +405,12 @@ def run_experiment(exp_base, exp_difficulty):
 
     ### Experimental Parameters ###
     exp_settings['randomize'] = True
-    exp_settings['perfect_info'] = False            #Make arms 100%/0% reward instead of 90%/10%
-    exp_settings['torch_device'] = 'CPU'            # 'CPU' or 'GPU'
+    exp_settings['perfect_info'] = False                # Make arms 100%/0% reward instead of 90%/10%
+    exp_settings['torch_device'] = 'CPU'                # 'CPU' or 'GPU'
 
     # Task Info
-    exp_settings['kernel'] = 'cosine'               # Cosine, l2
-    exp_settings['mem_store'] = 'context'           # Context, embedding, obs/context, obs, hidden (unsure how to do obs, hidden return calc w/o barcode predictions)
+    exp_settings['kernel'] = 'cosine'                   # Cosine, l2
+    exp_settings['mem_store'] = 'context'               # Context, embedding, hidden, L2RL
 
     # Task Size and Length
     exp_settings['num_arms'] = 0
@@ -408,43 +420,49 @@ def run_experiment(exp_base, exp_difficulty):
     exp_settings['epochs'] = 0
 
     # Task Complexity
-    exp_settings['noise_percent'] = [0.25, 0.5, 0.75, 0.875]
-    exp_settings['noise_eval_epochs'] = 0
-    exp_settings['sim_threshold'] = 0         #Cosine similarity threshold for clustering
-    exp_settings['hamming_threshold'] = 0       #Hamming distance for clustering
+    exp_settings['noise_percent'] = [0.25, 0.5, 0.75, 0.875]    #What noise percent to apply during eval phase
+    exp_settings['noise_eval_epochs'] = 0               # How long to spend on a single noise percent eval
+    exp_settings['noise_train_percent'] = 0             # What noise percent to apply during training, if any
+    exp_settings['sim_threshold'] = 0                   # Cosine similarity threshold for single clustering
+    exp_settings['hamming_threshold'] = 0               # Hamming distance for multi clustering
 
     # Data Logging
     exp_settings['tensorboard_logging'] = False
     ### End of Experimental Parameters ###
 
-
-    # Forced Hyperparams
+    # Forced Hyperparams (found after multiple passes through Bayesian Optimization)
     exp_settings['torch_device'] = 'GPU'
-    exp_settings['dim_hidden_a2c'] = int(2**8.644)        #400
-    exp_settings['dim_hidden_lstm'] = int(2**8.655)       #403
+    exp_settings['dim_hidden_a2c'] = int(2**8.644)          #400
+    exp_settings['dim_hidden_lstm'] = int(2**8.655)         #403
     exp_settings['entropy_error_coef'] = 0.0391
-    exp_settings['lstm_learning_rate'] = 10**-3.332       #4.66e-4
+    exp_settings['lstm_learning_rate'] = 10**-3.332         #4.66e-4
     exp_settings['value_error_coef'] = 0.62
     exp_settings['embedding_size'] = int(2**8.629)          #395
     exp_settings['embedder_learning_rate'] = 10**-3.0399    #9.1e-4
 
     # Experimental Variables
-    mem_store_types, exp_settings['epochs'], exp_settings['noise_eval_epochs'], num_repeats, file_loc = exp_base
+    mem_store_types, exp_settings['epochs'], exp_settings['noise_eval_epochs'], exp_settings['noise_train_percent'], num_repeats, file_loc = exp_base
     exp_settings['hamming_threshold'], exp_settings['num_arms'], exp_settings['num_barcodes'], exp_settings[
         'barcode_size'], exp_settings['pulls_per_episode'], exp_settings['sim_threshold'] = exp_difficulty
 
     # Safety Assertions
-    assert exp_settings['epochs'] > 10, "Training epochs must be greater than 10"
-    assert exp_settings['pulls_per_episode'] > 2, "Pulls per episode must be greater than 2"
+    assert exp_settings['epochs'] >= 10, "Training epochs must be greater than 10"
+    assert exp_settings['pulls_per_episode'] >= 2, "Pulls per episode must be greater than 2"
     assert exp_settings['barcode_size'] > 3*exp_settings['hamming_threshold'], "Barcodes must be greater than 3*Hamming"
+    assert exp_settings['num_barcodes'] <= 12, "Too many distinct barcodes to display with current selection of labels in T-SNE"
+    assert exp_settings['num_arms'] <= 8, "Too many distinct arms to display with current selection of colors in T-SNE"
 
     ### Beginning of Experimental Runs ###
     f, axes = plt.subplots(1, 1, figsize=(8, 6))
     f1, axs = plt.subplots(1, 1, figsize=(8, 6))
-    f3, axes3 = plt.subplots(1, len(mem_store_types), figsize=(3*len(mem_store_types), 6))
 
+    # Prevent graph subscripting bug if running test on only one mem_store type
+    num_tsne = len(mem_store_types) if len(mem_store_types) > 2 else 2
+    f3, axes3 = plt.subplots(1, num_tsne, figsize=(5*num_tsne, 6))
+
+    exp_length = exp_settings['epochs']+exp_settings['noise_eval_epochs']*len(exp_settings['noise_percent'])
     for idx_mem, mem_store in enumerate(mem_store_types):
-        tot_rets = np.zeros(exp_settings['epochs']+exp_settings['noise_eval_epochs']*len(exp_settings['noise_percent']))
+        tot_rets = np.zeros(exp_length)
         exp_settings['mem_store'] = mem_store
         for i in range(num_repeats):
 
@@ -455,14 +473,27 @@ def run_experiment(exp_base, exp_difficulty):
             tot_rets += log_return/num_repeats
             # print(tot_rets)
 
-        smoothed_rewards = pd.Series.rolling(pd.Series(tot_rets), 30).mean()
-        smoothed_rewards = [elem for elem in smoothed_rewards]
-        axes.plot(smoothed_rewards, label=f"Mem: {mem_store}")
 
-        # Embedder/Mem Accuracy 
-        smoothed_accuracy = pd.Series.rolling(pd.Series(log_embedder_accuracy), 30).mean()
-        smoothed_accuracy = [elem for elem in smoothed_accuracy]
-        axs.plot(smoothed_accuracy, label=f"Mem: {mem_store}")
+        # LOWESS Smoothed Graphs
+        frac = 0.05
+        in_array = np.arange(exp_length)
+        lowess_rets = lowess(tot_rets, in_array, frac = frac, return_sorted=False)
+        axes.plot(lowess_rets, label=f"Mem: {mem_store.capitalize()}")
+
+        if mem_store != 'L2RL':
+            lowess_acc = lowess(log_embedder_accuracy, in_array, frac = frac, return_sorted=False)
+            axs.plot(lowess_acc, label=f"Mem: {mem_store.capitalize()}")
+
+        # # Rolling Window Smoothed Graphs
+        # # Returns
+        # smoothed_rewards = pd.Series.rolling(pd.Series(tot_rets), 5).mean()
+        # smoothed_rewards = [elem for elem in smoothed_rewards]
+        # axes.plot(smoothed_rewards, label=f"Mem: {mem_store}")
+
+        # # Embedder/Mem Accuracy 
+        # smoothed_accuracy = pd.Series.rolling(pd.Series(log_embedder_accuracy), 5).mean()
+        # smoothed_accuracy = [elem for elem in smoothed_accuracy]
+        # axs.plot(smoothed_accuracy, label=f"Mem: {mem_store}")
 
         # T-SNE to visualize keys in memory
         embeddings = [x[0] for x in keys]
@@ -476,7 +507,11 @@ def run_experiment(exp_base, exp_difficulty):
         f3, axes3 = plot_tsne_distribution(embeddings, labels, epoch_mapping, f3, axes3, idx_mem)
         axes3[idx_mem].xaxis.set_visible(False)
         axes3[idx_mem].yaxis.set_visible(False)
-        axes3[idx_mem].set_title(mem_store)
+        if mem_store != 'L2RL':
+            axes3[idx_mem].set_title(mem_store.capitalize())
+        else:
+            axes3[idx_mem].set_title('Hidden (L2RL)')
+            
 
     # Graph Setup
     if exp_settings['hamming_threshold']:
@@ -484,9 +519,9 @@ def run_experiment(exp_base, exp_difficulty):
     else:
         cluster_info = f"Similarity: {exp_settings['sim_threshold']}" 
 
-    graph_title = f""" --- Returns ---
+    graph_title = f""" --- Returns averaged over {num_repeats} runs ---
     Arms: {exp_settings['num_arms']} | Unique Barcodes: {exp_settings['num_barcodes']} | Barcode Dim: {exp_settings['barcode_size']}
-    Pulls per Trial: {exp_settings['pulls_per_episode']} | Clusters: {int(exp_settings['num_barcodes']/exp_settings['num_arms'])}
+    LOWESS Fraction: {frac} | Clusters: {int(exp_settings['num_barcodes']/exp_settings['num_arms'])}
     {cluster_info}
     """
 
@@ -508,7 +543,7 @@ def run_experiment(exp_base, exp_difficulty):
     # Accuracy
     axs.set_ylabel('Accuracy')
     axs.set_xlabel('Epoch')
-    axs.set_title('Model Barcode Prediction Accuracy')
+    axs.set_title('Barcode Prediction Accuracy from Memory Retrievals')
     axs.axhline(y=1/exp_settings['num_barcodes'], color='b', linestyle='dashed', label = 'Random Choice')
 
     sns.despine()
@@ -526,7 +561,7 @@ def run_experiment(exp_base, exp_difficulty):
 
     # Graph Saving
     file_loc = file_loc
-    exp_id = f"{exp_settings['num_arms']}a{exp_settings['num_barcodes']}b{exp_settings['pulls_per_episode']}p {exp_settings['hamming_threshold']} hamming {num_repeats} run(s) "
+    exp_id = f"{exp_settings['num_arms']}a{exp_settings['num_barcodes']}b{exp_settings['barcode_size']}s {exp_settings['hamming_threshold']} hamming {exp_settings['noise_train_percent']} noise_trained {num_repeats} run(s) "
     plot_type = ['returns', 'accuracy', 'tsne']
     for fig_num, figa in enumerate([f, f1, f3]):
         filename = file_loc + exp_id + plot_type[fig_num] +".png"

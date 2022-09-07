@@ -13,25 +13,47 @@ i'm not sure what will happen if num_barcodes isn't an integer multiple of num_a
 
 ###### Change These!!! ###########
 # Experiment Type and Length
-exp_types = ['context', 'embedding', 'hidden']
-training_epochs = 750
-noise_epochs = 50
+#context, embedding, hidden, L2RL
+
+exp_types = ['hidden', 'L2RL']
+training_epochs = 400
+noise_epochs = 40
+noise_train_percent = 0
 
 # Experiment Difficulty
-hamming_clustering = 0      #Create evenly distributed clusters based on arms/barcodes
+hamming_clustering = 1      #Create evenly distributed clusters based on arms/barcodes
 sim_threshold = 0           #Create one cluster regardless of arms/barcodes
-num_arms = 2
-num_barcodes = 4
+num_arms = 4
+num_barcodes = 8
 barcode_size = 24
 pulls_per_episode = 10
 
 # Randomized seed changes to average for returns graph
-num_repeats = 3
+num_repeats = 1
 
 # Modify this to fit your machines save paths
 figure_save_location = "..\\Memory-Storage-Ritter\\ICLR_Code\\figs\\"
 ###### NO MORE CHANGES!!!!!!!! ##########
 
-exp_base = exp_types, training_epochs, noise_epochs, num_repeats, figure_save_location
+exp_base = exp_types, training_epochs, noise_epochs, noise_train_percent, num_repeats, figure_save_location
 exp_difficulty = hamming_clustering, num_arms, num_barcodes, barcode_size, pulls_per_episode, sim_threshold
 run_experiment(exp_base, exp_difficulty)
+
+
+"""
+Tests to run:
+
+2a4b, 2a8b, 4a8b, 4a12b, 6a12b
+size 16, 24, 32
+
+
+Barcode Number
+Arm Number
+Barcode Size
+Baseline vs 1 Hamming Cluster
+
+Train with noise?
+
+
+
+"""

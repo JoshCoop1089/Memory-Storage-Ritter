@@ -121,11 +121,12 @@ class DND():
         # Save every embedding of the trial
         self.trial_buffer.pop(0)
         keys = self.trial_buffer
-        self.trial_hidden_states = [keys[i] for i in range(len(keys)) if keys[i] != () and i > len(keys)//4]
+        self.trial_hidden_states = [keys[-1]]
+        # self.trial_hidden_states = [keys[i] for i in range(len(keys)) if keys[i] != () and i > len(keys)//4]
 
         # Append new memories at head of list to allow sim search to find these first
-        for embedding, context_location, _, real_bc in self.trial_hidden_states:
-            self.keys = [[torch.squeeze(embedding.data), context_location, real_bc]] + self.keys
+        for embedding, predicted_bc, _, real_bc in self.trial_hidden_states:
+            self.keys = [[torch.squeeze(embedding.data), predicted_bc, real_bc]] + self.keys
             self.vals = [torch.squeeze(memory_val.data)] + self.vals
 
         while len(self.keys) > self.dict_len:
@@ -133,11 +134,7 @@ class DND():
             self.vals.pop()
         return
 
-    def save_memory_non_embedder(self, memory_key, barcode_tensor, memory_val):
-
-        # Noisy barcodes are the memory_key, barcode_tensor is holding the ground truth barcode
-        barcode_string = np.array2string(barcode_tensor.cpu().numpy())[2:-2].replace(" ", "").replace(".", "")
-
+    def save_memory_non_embedder(self, memory_key, barcode_string, memory_val):
         try:
             test = self.keys[0][0]
         except IndexError:

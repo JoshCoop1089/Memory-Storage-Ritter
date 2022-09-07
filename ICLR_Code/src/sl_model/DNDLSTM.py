@@ -11,7 +11,7 @@ from sl_model.DND import DND
 from sl_model.A2C import A2C_linear, A2C
 
 # constants
-N_GATES = 4
+# N_GATES = 4
 
 class DNDLSTM(nn.Module):
 
@@ -25,11 +25,15 @@ class DNDLSTM(nn.Module):
         self.bias = bias
         self.device = device
         self.exp_settings = exp_settings
+
+        # Testing L2RL as a benchmark for no memory R-Gate use
+        self.N_GATES = 3 if exp_settings['mem_store'] == 'L2RL' else 4
+
         # input-hidden weights
-        self.i2h = nn.Linear(dim_input_lstm, (N_GATES+1)
+        self.i2h = nn.Linear(dim_input_lstm, (self.N_GATES+1)
                              * dim_hidden_lstm, bias=bias, device = self.device)
         # hidden-hidden weights
-        self.h2h = nn.Linear(dim_hidden_lstm, (N_GATES+1) * dim_hidden_lstm, bias=bias, device = self.device)
+        self.h2h = nn.Linear(dim_hidden_lstm, (self.N_GATES+1) * dim_hidden_lstm, bias=bias, device = self.device)
         # dnd
         self.dnd = DND(dict_len, dim_hidden_lstm, exp_settings, self.device)
         #policy
@@ -56,10 +60,13 @@ class DNDLSTM(nn.Module):
         if self.exp_settings['mem_store'] != 'embedding':
             if self.exp_settings['mem_store'] == 'context':
                 q_t = barcode_tensor
-            elif self.exp_settings['mem_store'] == 'obs/context':
-                q_t = obs_bar_reward
             elif self.exp_settings['mem_store'] == 'hidden':
                 q_t = h
+                
+            # Store hidden states in memory for t-SNE later, but not used in L2RL calculations
+            elif self.exp_settings['mem_store'] == 'L2RL':
+                q_t = h
+
             else:
                 raise ValueError('Incorrect mem_store type')
 
@@ -69,16 +76,18 @@ class DNDLSTM(nn.Module):
         preact = Wx + Wh
 
         # get all gate values
-        gates = preact[:, : N_GATES * self.dim_hidden_lstm].sigmoid()
+        gates = preact[:, : self.N_GATES * self.dim_hidden_lstm].sigmoid()
 
         # split input(write) gate, forget gate, output(read) gate
         f_t = gates[:, :self.dim_hidden_lstm]
         i_t = gates[:, self.dim_hidden_lstm:2 * self.dim_hidden_lstm]
         o_t = gates[:, 2*self.dim_hidden_lstm:3 * self.dim_hidden_lstm]
-        r_t = gates[:, -self.dim_hidden_lstm:]
+        r_t = None
+        if self.exp_settings['mem_store'] != 'L2RL':
+            r_t = gates[:, -self.dim_hidden_lstm:]
 
         # stuff to be written to cell state
-        c_t_new = preact[:, N_GATES * self.dim_hidden_lstm:].tanh()
+        c_t_new = preact[:, self.N_GATES * self.dim_hidden_lstm:].tanh()
 
         # new cell state = gated(prev_c) + gated(new_stuff)
         c_t = torch.mul(f_t, c) + torch.mul(i_t, c_t_new)
@@ -102,10 +111,14 @@ class DNDLSTM(nn.Module):
             mem, predicted_barcode = self.dnd.get_memory_non_embedder(q_t)
             m_t = mem.tanh()
 
-        # gate the memory; in general, can be any transformation of it
-        c_t = c_t + torch.mul(r_t, m_t)
+        if  self.exp_settings['mem_store'] != 'L2RL':
+            # gate the memory; in general, can be any transformation of it
+            c_t = c_t + torch.mul(r_t, m_t)
+
         # get gated hidden state from the cell state
         h_t = torch.mul(o_t, c_t.tanh())
+        if self.exp_settings['mem_store'] == 'hidden' or self.exp_settings['mem_store'] == 'L2RL':
+            q_t = h_t
 
         # Saving memory happens once at the end of every episode
         if not self.dnd.encoding_off:
@@ -115,7 +128,7 @@ class DNDLSTM(nn.Module):
                 self.dnd.save_memory(h_t, c_t)
 
             else:
-                self.dnd.save_memory_non_embedder(q_t, barcode_tensor, c_t)
+                self.dnd.save_memory_non_embedder(q_t, barcode_string, c_t)
 
         # policy
         pi_a_t, v_t, entropy = self.a2c.forward(h_t)
