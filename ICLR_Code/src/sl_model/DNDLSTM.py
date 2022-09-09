@@ -62,7 +62,7 @@ class DNDLSTM(nn.Module):
                 q_t = barcode_tensor
             elif self.exp_settings['mem_store'] == 'hidden':
                 q_t = h
-                
+
             # Store hidden states in memory for t-SNE later, but not used in L2RL calculations
             elif self.exp_settings['mem_store'] == 'L2RL':
                 q_t = h
@@ -100,7 +100,7 @@ class DNDLSTM(nn.Module):
                     param.requires_grad = False 
     
             # Query Memory (hidden state passed into embedder, barcode_id used for embedder loss function)
-            mem, predicted_barcode = self.dnd.get_memory(h, barcode_string, barcode_id)
+            mem, predicted_barcode, sim_score = self.dnd.get_memory(h, barcode_string, barcode_id)
             m_t = mem.tanh()
 
             # Unfreeze LSTM
@@ -108,8 +108,11 @@ class DNDLSTM(nn.Module):
                 for name, param in layer.named_parameters():
                     param.requires_grad = True 
         else:
-            mem, predicted_barcode = self.dnd.get_memory_non_embedder(q_t)
+            mem, predicted_barcode, sim_score = self.dnd.get_memory_non_embedder(q_t)
             m_t = mem.tanh()
+
+        if self.exp_settings['mem_store'] == 'L2RL':
+            sim_score = torch.tensor(0, device=self.device)
 
         if  self.exp_settings['mem_store'] != 'L2RL':
             # gate the memory; in general, can be any transformation of it
@@ -117,6 +120,8 @@ class DNDLSTM(nn.Module):
 
         # get gated hidden state from the cell state
         h_t = torch.mul(o_t, c_t.tanh())
+
+        # Store the most updated hidden state in memory for future use/t-sne
         if self.exp_settings['mem_store'] == 'hidden' or self.exp_settings['mem_store'] == 'L2RL':
             q_t = h_t
 
@@ -137,7 +142,7 @@ class DNDLSTM(nn.Module):
         
         # fetch activity
         output = (a_t, predicted_barcode, prob_a_t, v_t, entropy, h_t, c_t)
-        cache = (f_t, i_t, o_t, r_t, m_t)
+        cache = (f_t, i_t, o_t, r_t, m_t, sim_score)
 
         return output, cache
 

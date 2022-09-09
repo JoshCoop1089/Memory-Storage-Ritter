@@ -125,8 +125,8 @@ class DND():
         # self.trial_hidden_states = [keys[i] for i in range(len(keys)) if keys[i] != () and i > len(keys)//4]
 
         # Append new memories at head of list to allow sim search to find these first
-        for embedding, predicted_bc, _, real_bc in self.trial_hidden_states:
-            self.keys = [[torch.squeeze(embedding.data), predicted_bc, real_bc]] + self.keys
+        for embedding, real_bc, _, predicted_bc in self.trial_hidden_states:
+            self.keys = [[torch.squeeze(embedding.data), real_bc, predicted_bc]] + self.keys
             self.vals = [torch.squeeze(memory_val.data)] + self.vals
 
         while len(self.keys) > self.dict_len:
@@ -192,16 +192,22 @@ class DND():
             similarities = compute_similarities(embedding, key_list, self.kernel)
                 
             # get the best-match memory
-            best_memory_val, _ = self._get_memory(similarities)
+            best_memory_val, _, best_sim_score= self._get_memory(similarities)
         
         # If nothing is stored in memory yet, return 0's
         else:
-            self.trial_buffer.append((embedding, predicted_context, emb_loss, real_label_as_string))
-            return _empty_memory(self.hidden_lstm_dim, device=self.device), _empty_barcode(self.exp_settings['barcode_size'])
+            self.trial_buffer.append(
+                (embedding, real_label_as_string, emb_loss, predicted_context))
+            return _empty_memory(self.hidden_lstm_dim, device=self.device), _empty_barcode(self.exp_settings['barcode_size']), torch.tensor(0, device = self.device)
         
         # Store embedding and predicted class label memory index in trial_buffer
-        self.trial_buffer.append((embedding, predicted_context, emb_loss, real_label_as_string))
-        return best_memory_val, predicted_context
+        self.trial_buffer.append((embedding, real_label_as_string, emb_loss, predicted_context))
+
+        # # Prototype memory gating
+        # if best_sim_score.item() < 0.75:
+        #     return _empty_memory(self.hidden_lstm_dim, self.device), _empty_barcode(self.exp_settings['barcode_size']), torch.tensor(0, device=self.device)
+        # else:
+        return best_memory_val, predicted_context, best_sim_score
 
     def get_memory_non_embedder(self, query_key):
         """Perform a 1-NN search over dnd
@@ -225,19 +231,22 @@ class DND():
 
         # if no memory, return the zero vector
         if n_memories == 0 or self.retrieval_off:
-            return _empty_memory(self.hidden_lstm_dim, self.device), _empty_barcode(self.exp_settings['barcode_size'])
+            return _empty_memory(self.hidden_lstm_dim, self.device), _empty_barcode(self.exp_settings['barcode_size']), torch.tensor(0, device=self.device)
         else:
             # compute similarity(query, memory_i ), for all i
             key_list = [self.keys[x][0] for x in range(len(self.keys))]
             similarities = compute_similarities(query_key, key_list, self.kernel)
 
             # get the best-match memory
-            best_memory_val, best_memory_id = self._get_memory(similarities)
+            best_memory_val, best_memory_id, best_sim_score = self._get_memory(similarities)
+
+            # if best_sim_score.item() < 0.75:
+            #     return _empty_memory(self.hidden_lstm_dim, self.device), _empty_barcode(self.exp_settings['barcode_size']), torch.tensor(0, device=self.device)
 
             # get the barcode for that memory
             barcode = self.keys[best_memory_id][1]
 
-            return best_memory_val, barcode
+            return best_memory_val, barcode, best_sim_score
 
     def _get_memory(self, similarities, policy='1NN'):
         """get the episodic memory according to some policy
@@ -258,11 +267,12 @@ class DND():
         """
         best_memory_val = None
         if policy == '1NN':
+            best_sim_score = torch.max(similarities)
             best_memory_id = torch.argmax(similarities)
             best_memory_val = self.vals[best_memory_id]
         else:
             raise ValueError(f'unrecog recall policy: {policy}')
-        return best_memory_val, best_memory_id
+        return best_memory_val, best_memory_id, best_sim_score
 
 """helpers"""
 def compute_similarities(query_key, key_list, metric):

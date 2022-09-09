@@ -15,17 +15,17 @@ i'm not sure what will happen if num_barcodes isn't an integer multiple of num_a
 # Experiment Type and Length
 #context, embedding, hidden, L2RL
 
-exp_types = ['hidden', 'L2RL']
-training_epochs = 400
-noise_epochs = 40
+exp_types = ['embedding']
+training_epochs = 2000
+noise_epochs = 2
 noise_train_percent = 0
 
 # Experiment Difficulty
 hamming_clustering = 1      #Create evenly distributed clusters based on arms/barcodes
 sim_threshold = 0           #Create one cluster regardless of arms/barcodes
-num_arms = 4
-num_barcodes = 8
-barcode_size = 24
+num_arms = 10
+num_barcodes = 10
+barcode_size = 20
 pulls_per_episode = 10
 
 # Randomized seed changes to average for returns graph
